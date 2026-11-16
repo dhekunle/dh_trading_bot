@@ -30,39 +30,98 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
     stats = db.query(Stats).order_by(Stats.id.desc()).first()
     recent_trades = db.query(Trade).order_by(Trade.id.desc()).limit(15).all()
     
-    # Convert to plain dicts so Jinja doesn't choke on JSON fields
-    recent = []
-    for t in recent_trades:
-        recent.append({
-            "id": t.id,
-            "trade_number": t.trade_number,
-            "asset": t.asset,
-            "action": t.action,
-            "expiry_mins": t.expiry_mins,
-            "status": t.status or "pending",
-            "result": t.result
-        })
-    
-    stats_data = None
+    # Build simple HTML (avoids Jinja2 template bug on Render)
+    stats_html = "<p>No stats yet</p>"
     if stats:
-        stats_data = {
-            "wins": stats.wins or 0,
-            "losses": stats.losses or 0,
-            "draws": stats.draws or 0,
-            "trade_number": stats.trade_number or 1
-        }
+        stats_html = f"<p>Wins: {stats.wins or 0} · Losses: {stats.losses or 0} · Draws: {stats.draws or 0}</p><p>Next Trade #: {stats.trade_number or 1}</p>"
     
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "quality": quality,
-        "reason": reason,
-        "sessions": ", ".join(sessions) if sessions else "None",
-        "stats": stats_data,
-        "recent": recent,
-        "paused": bot_paused,
-        "scanning": scanning,
-        "now": datetime.datetime.now(WAT).strftime("%Y-%m-%d %H:%M WAT")
-    })
+    rows = ""
+    for t in recent_trades:
+        status = t.status or "pending"
+        actions = ""
+        if status == "pending":
+            actions += f'<form action="/post/{t.id}" method="post" style="display:inline;"><button class="btn btn-green" style="padding:6px 12px;font-size:0.85em;">ACTIVATE</button></form> '
+        if status in ["pending", "active"]:
+            actions += f'''
+            <form action="/result/{t.id}" method="post" style="display:inline;"><input type="hidden" name="result" value="WIN"><button class="btn btn-green" style="padding:6px 10px;font-size:0.8em;">W</button></form>
+            <form action="/result/{t.id}" method="post" style="display:inline;"><input type="hidden" name="result" value="LOSS"><button class="btn btn-red" style="padding:6px 10px;font-size:0.8em;">L</button></form>
+            '''
+        rows += f'''
+        <tr>
+            <td>{t.trade_number}</td>
+            <td>{t.asset}</td>
+            <td>{t.action}</td>
+            <td>{t.expiry_mins}m</td>
+            <td class="{status}">{status.upper()}</td>
+            <td>{actions}</td>
+        </tr>
+        '''
+    
+    pause_label = "Resume" if bot_paused else "Pause"
+    bot_status = "PAUSED" if bot_paused else "ACTIVE"
+    now = datetime.datetime.now(WAT).strftime("%Y-%m-%d %H:%M WAT")
+    sessions_str = ", ".join(sessions) if sessions else "None"
+    
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forex Signal Bot</title>
+    <style>
+        :root {{ --bg: #0f1117; --card: #1a1d27; --text: #e4e6eb; --accent: #3b82f6; --green: #22c55e; --red: #ef4444; }}
+        body {{ font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }}
+        .container {{ max-width: 1000px; margin: 0 auto; }}
+        h1 {{ margin-bottom: 8px; }}
+        .card {{ background: var(--card); border-radius: 12px; padding: 20px; margin-bottom: 16px; }}
+        .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
+        .btn {{ background: var(--accent); color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; }}
+        .btn:hover {{ opacity: 0.9; }}
+        .btn-green {{ background: var(--green); }}
+        .btn-red {{ background: var(--red); }}
+        .btn-gray {{ background: #4b5563; }}
+        .status {{ font-size: 0.9em; color: #9ca3af; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th, td {{ text-align: left; padding: 8px; border-bottom: 1px solid #2d313c; }}
+        .pending {{ color: #fbbf24; }}
+        .win {{ color: var(--green); }}
+        .loss {{ color: var(--red); }}
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Forex Signal Bot</h1>
+    <p class="status">{now} · Session: {sessions_str} · Quality: <strong>{quality}</strong> ({reason})</p>
+    
+    <div class="grid">
+        <div class="card">
+            <h3>Controls</h3>
+            <form action="/scan" method="post" style="display:inline;">
+                <button class="btn" {"disabled" if bot_paused else ""}>Scan Now</button>
+            </form>
+            <form action="/pause" method="post" style="display:inline; margin-left:8px;">
+                <button class="btn btn-gray">{pause_label}</button>
+            </form>
+            <p class="status" style="margin-top:12px;">Bot is {bot_status}</p>
+        </div>
+        <div class="card">
+            <h3>Stats</h3>
+            {stats_html}
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Recent Signals</h3>
+        <table>
+            <tr><th>#</th><th>Asset</th><th>Action</th><th>Expiry</th><th>Status</th><th>Actions</th></tr>
+            {rows if rows else "<tr><td colspan='6'>No signals yet</td></tr>"}
+        </table>
+    </div>
+</div>
+</body>
+</html>'''
+    
+    return HTMLResponse(content=html)
 
 @app.post("/scan")
 async def start_scan(db: Session = Depends(get_db)):
