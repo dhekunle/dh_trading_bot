@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -9,6 +10,9 @@ from .database import init_db, get_db, Trade, Stats
 from .signal_engine import SignalEngine
 
 app = FastAPI(title="Forex Signal Bot")
+
+# Create static folder if it doesn't exist (GitHub doesn't upload empty folders)
+os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 

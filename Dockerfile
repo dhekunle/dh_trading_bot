@@ -7,8 +7,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Create data directory for SQLite
-RUN mkdir -p data
+# Create data and static directories
+RUN mkdir -p data static
 
 ENV PYTHONUNBUFFERED=1
 
