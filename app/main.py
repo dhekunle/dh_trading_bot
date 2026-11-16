@@ -1,6 +1,4 @@
-import hashlib
 import os
-import secrets
 from fastapi import FastAPI, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,9 +6,8 @@ from sqlalchemy.orm import Session
 import datetime
 import pytz
 import asyncio
-from .database import init_db, get_db, Trade, Stats, User
+from .database import init_db, get_db, Trade, Stats
 from .signal_engine import SignalEngine
-from .config import SECRET_KEY
 
 app = FastAPI(title="Forex Signal Bot")
 
@@ -24,139 +21,8 @@ bot_paused = False
 scanning = False
 auto_scan_enabled = True
 
-def hash_password(password: str) -> str:
-    # Simple salted hash (avoids bcrypt issues on Render)
-    salt = secrets.token_hex(16)
-    hashed = hashlib.sha256((salt + password).encode()).hexdigest()
-    return f"{salt}${hashed}"
-
-def verify_password(plain: str, hashed: str) -> bool:
-    try:
-        salt, stored_hash = hashed.split("$", 1)
-        return hashlib.sha256((salt + plain).encode()).hexdigest() == stored_hash
-    except Exception:
-        return False
-
-def get_current_user(request: Request, db: Session):
-    session_id = request.cookies.get("session_id")
-    if not session_id or session_id not in sessions:
-        return None
-    user_id = sessions[session_id]
-    return db.query(User).filter(User.id == user_id).first()
-
-@app.get("/register", response_class=HTMLResponse)
-async def register_page():
-    return HTMLResponse('''
-    <!DOCTYPE html>
-    <html>
-    <head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Create Account</title>
-    <style>
-        body { font-family: system-ui; background: #0f1117; color: #e4e6eb; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .box { background: #1a1d27; padding: 32px; border-radius: 12px; width: 340px; }
-        input { width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px; border: 1px solid #333; background: #0f1117; color: white; box-sizing: border-box; }
-        button { width: 100%; padding: 12px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: 600; margin-top: 8px; }
-        a { color: #93c5fd; }
-    </style></head>
-    <body>
-    <div class="box">
-        <h2>Create Account</h2>
-        <form method="post" action="/register">
-            <input name="email" type="email" placeholder="Your Gmail" required>
-            <input name="password" type="password" placeholder="Password" required minlength="6">
-            <input name="confirm" type="password" placeholder="Confirm Password" required>
-            <button type="submit">Create Account</button>
-        </form>
-        <p style="text-align:center; margin-top:16px;"><a href="/login">Already have an account? Login</a></p>
-    </div>
-    </body></html>
-    ''')
-
-@app.post("/register")
-async def do_register(email: str = Form(...), password: str = Form(...), confirm: str = Form(...), db: Session = Depends(get_db)):
-    try:
-        if password != confirm:
-            return RedirectResponse("/register?error=mismatch", status_code=303)
-        existing = db.query(User).filter(User.email == email.lower().strip()).first()
-        if existing:
-            return RedirectResponse("/register?error=exists", status_code=303)
-        user = User(
-            email=email.lower().strip(),
-            password_hash=hash_password(password)
-        )
-        db.add(user)
-        db.commit()
-        return RedirectResponse("/login?registered=1", status_code=303)
-    except Exception as e:
-        print(f"Register error: {e}")
-        db.rollback()
-        return RedirectResponse("/register?error=server", status_code=303)
-
-@app.post("/login")
-async def do_login(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    try:
-        user = db.query(User).filter(User.email == email.lower().strip()).first()
-        if not user or not verify_password(password, user.password_hash):
-            return RedirectResponse("/login?error=1", status_code=303)
-        session_id = secrets.token_hex(16)
-        sessions[session_id] = user.id
-        response = RedirectResponse("/", status_code=303)
-        response.set_cookie("session_id", session_id, httponly=True, max_age=60*60*24*7)
-        return response
-    except Exception as e:
-        print(f"Login error: {e}")
-        return RedirectResponse("/login?error=server", status_code=303)
-
-@app.get("/login", response_class=HTMLResponse)
-async def login_page():
-    return HTMLResponse('''
-    <!DOCTYPE html>
-    <html>
-    <head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Login</title>
-    <style>
-        body { font-family: system-ui; background: #0f1117; color: #e4e6eb; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .box { background: #1a1d27; padding: 32px; border-radius: 12px; width: 340px; }
-        input { width: 100%; padding: 10px; margin: 8px 0; border-radius: 6px; border: 1px solid #333; background: #0f1117; color: white; box-sizing: border-box; }
-        button { width: 100%; padding: 12px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: 600; margin-top: 8px; }
-        a { color: #93c5fd; }
-    </style></head>
-    <body>
-    <div class="box">
-        <h2>Login</h2>
-        <form method="post" action="/login">
-            <input name="email" type="email" placeholder="Your Gmail" required>
-            <input name="password" type="password" placeholder="Password" required>
-            <button type="submit">Login</button>
-        </form>
-        <p style="text-align:center; margin-top:16px;"><a href="/register">Create an account</a></p>
-    </div>
-    </body></html>
-    ''')
-
-@app.post("/login")
-async def do_login(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == email.lower()).first()
-    if not user or not verify_password(password, user.password_hash):
-        return RedirectResponse("/login?error=1", status_code=303)
-    session_id = secrets.token_hex(16)
-    sessions[session_id] = user.id
-    response = RedirectResponse("/", status_code=303)
-    response.set_cookie("session_id", session_id, httponly=True, max_age=60*60*24*7)
-    return response
-
-@app.get("/logout")
-async def logout(request: Request):
-    session_id = request.cookies.get("session_id")
-    sessions.pop(session_id, None)
-    response = RedirectResponse("/login", status_code=303)
-    response.delete_cookie("session_id")
-    return response
-
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request, db)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    
     sessions_list, quality, reason = engine.get_session_quality()
     stats = db.query(Stats).order_by(Stats.id.desc()).first()
     recent_trades = db.query(Trade).order_by(Trade.id.desc()).limit(15).all()
@@ -217,12 +83,11 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         .pending {{ color: #fbbf24; }}
         .win {{ color: var(--green); }}
         .loss {{ color: var(--red); }}
-        a {{ color: #93c5fd; }}
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>Forex Signal Bot <small style="font-size:0.5em;">{user.email} · <a href="/logout">Logout</a></small></h1>
+    <h1>Forex Signal Bot</h1>
     <p class="status">{now} · Session: {sessions_str} · Quality: <strong>{quality}</strong> ({reason}) · Auto-scan: {auto_status}</p>
     
     <div class="grid">
@@ -259,9 +124,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
     return HTMLResponse(content=html)
 
 @app.post("/scan")
-async def start_scan(request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request, db):
-        return RedirectResponse("/login", status_code=303)
+async def start_scan(db: Session = Depends(get_db)):
     global scanning
     if bot_paused:
         return RedirectResponse("/", status_code=303)
@@ -292,9 +155,7 @@ async def start_scan(request: Request, db: Session = Depends(get_db)):
     return RedirectResponse("/", status_code=303)
 
 @app.post("/post/{trade_id}")
-async def post_signal(trade_id: int, request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request, db):
-        return RedirectResponse("/login", status_code=303)
+async def post_signal(trade_id: int, db: Session = Depends(get_db)):
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     if not trade or trade.status != "pending":
         return RedirectResponse("/", status_code=303)
@@ -303,9 +164,7 @@ async def post_signal(trade_id: int, request: Request, db: Session = Depends(get
     return RedirectResponse("/", status_code=303)
 
 @app.post("/result/{trade_id}")
-async def log_result(trade_id: int, request: Request, result: str = Form(...), db: Session = Depends(get_db)):
-    if not get_current_user(request, db):
-        return RedirectResponse("/login", status_code=303)
+async def log_result(trade_id: int, result: str = Form(...), db: Session = Depends(get_db)):
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     if not trade:
         return RedirectResponse("/", status_code=303)
@@ -330,17 +189,13 @@ async def log_result(trade_id: int, request: Request, result: str = Form(...), d
     return RedirectResponse("/", status_code=303)
 
 @app.post("/pause")
-async def toggle_pause(request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request, db):
-        return RedirectResponse("/login", status_code=303)
+async def toggle_pause():
     global bot_paused
     bot_paused = not bot_paused
     return RedirectResponse("/", status_code=303)
 
 @app.post("/toggle-auto")
-async def toggle_auto(request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request, db):
-        return RedirectResponse("/login", status_code=303)
+async def toggle_auto():
     global auto_scan_enabled
     auto_scan_enabled = not auto_scan_enabled
     return RedirectResponse("/", status_code=303)
