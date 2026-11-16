@@ -17,7 +17,7 @@ class Trade(Base):
     expiry_mins = Column(Integer)
     price = Column(Float)
     confidence = Column(String)
-    status = Column(String, default="pending")  # pending, posted, win, loss, draw, skipped
+    status = Column(String, default="pending")
     result = Column(String, nullable=True)
     is_martingale = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -31,6 +31,8 @@ class User(Base):
     password_hash = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_admin = Column(Boolean, default=False)
+
+class Stats(Base):
     __tablename__ = "stats"
     id = Column(Integer, primary_key=True)
     week = Column(String, unique=True)
