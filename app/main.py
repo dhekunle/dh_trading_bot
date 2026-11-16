@@ -15,6 +15,8 @@ app = FastAPI(title="Forex Signal Bot")
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+# Disable cache to avoid Jinja2 "unhashable type: dict" bug on Render
+templates.env.cache = None
 
 init_db()
 engine = SignalEngine()
