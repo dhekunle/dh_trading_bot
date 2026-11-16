@@ -24,7 +24,13 @@ class Trade(Base):
     resolved_at = Column(DateTime, nullable=True)
     details = Column(JSON, nullable=True)
 
-class Stats(Base):
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True)
+    password_hash = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_admin = Column(Boolean, default=False)
     __tablename__ = "stats"
     id = Column(Integer, primary_key=True)
     week = Column(String, unique=True)
