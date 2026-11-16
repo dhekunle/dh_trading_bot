@@ -46,6 +46,11 @@ class Stats(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Force create users table if missing
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        User.__table__.create(bind=engine)
 
 def get_db():
     db = SessionLocal()

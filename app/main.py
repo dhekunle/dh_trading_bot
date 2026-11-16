@@ -73,14 +73,38 @@ async def register_page():
 
 @app.post("/register")
 async def do_register(email: str = Form(...), password: str = Form(...), confirm: str = Form(...), db: Session = Depends(get_db)):
-    if password != confirm:
-        return RedirectResponse("/register?error=mismatch", status_code=303)
-    if db.query(User).filter(User.email == email.lower()).first():
-        return RedirectResponse("/register?error=exists", status_code=303)
-    user = User(email=email.lower(), password_hash=hash_password(password))
-    db.add(user)
-    db.commit()
-    return RedirectResponse("/login?registered=1", status_code=303)
+    try:
+        if password != confirm:
+            return RedirectResponse("/register?error=mismatch", status_code=303)
+        existing = db.query(User).filter(User.email == email.lower().strip()).first()
+        if existing:
+            return RedirectResponse("/register?error=exists", status_code=303)
+        user = User(
+            email=email.lower().strip(),
+            password_hash=hash_password(password)
+        )
+        db.add(user)
+        db.commit()
+        return RedirectResponse("/login?registered=1", status_code=303)
+    except Exception as e:
+        print(f"Register error: {e}")
+        db.rollback()
+        return RedirectResponse("/register?error=server", status_code=303)
+
+@app.post("/login")
+async def do_login(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    try:
+        user = db.query(User).filter(User.email == email.lower().strip()).first()
+        if not user or not verify_password(password, user.password_hash):
+            return RedirectResponse("/login?error=1", status_code=303)
+        session_id = secrets.token_hex(16)
+        sessions[session_id] = user.id
+        response = RedirectResponse("/", status_code=303)
+        response.set_cookie("session_id", session_id, httponly=True, max_age=60*60*24*7)
+        return response
+    except Exception as e:
+        print(f"Login error: {e}")
+        return RedirectResponse("/login?error=server", status_code=303)
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page():
