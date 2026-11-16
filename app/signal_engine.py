@@ -4,7 +4,7 @@ Uses Twelve Data instead of yfinance.
 """
 import datetime
 import pandas as pd
-import pandas_ta as ta
+import pandas_ta_classic as ta
 import pytz
 from typing import Dict, List, Optional, Tuple
 from .data_source import TwelveDataClient

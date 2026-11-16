@@ -3,7 +3,7 @@ uvicorn[standard]
 python-dotenv
 requests
 pandas
-pandas-ta
+pandas-ta-classic
 groq
 pytz
 numpy
@@ -11,3 +11,4 @@ sqlalchemy
 jinja2
 python-multipart
 aiofiles
+
