@@ -1,3 +1,4 @@
+import hashlib
 import os
 import secrets
 from fastapi import FastAPI, Request, Depends, Form
@@ -7,7 +8,6 @@ from sqlalchemy.orm import Session
 import datetime
 import pytz
 import asyncio
-from passlib.context import CryptContext
 from .database import init_db, get_db, Trade, Stats, User
 from .signal_engine import SignalEngine
 from .config import SECRET_KEY
@@ -24,14 +24,18 @@ bot_paused = False
 scanning = False
 auto_scan_enabled = True
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-sessions = {}  # session_id -> user_id
-
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    # Simple salted hash (avoids bcrypt issues on Render)
+    salt = secrets.token_hex(16)
+    hashed = hashlib.sha256((salt + password).encode()).hexdigest()
+    return f"{salt}${hashed}"
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        salt, stored_hash = hashed.split("$", 1)
+        return hashlib.sha256((salt + plain).encode()).hexdigest() == stored_hash
+    except Exception:
+        return False
 
 def get_current_user(request: Request, db: Session):
     session_id = request.cookies.get("session_id")
