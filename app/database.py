@@ -20,6 +20,8 @@ class Trade(Base):
     status = Column(String, default="pending")
     result = Column(String, nullable=True)
     is_martingale = Column(Boolean, default=False)
+    martingale_level = Column(Integer, default=0)  # 0 = normal, 1 or 2
+    market_type = Column(String, default="patience")  # "patience" or "3min"
     created_at = Column(DateTime, default=datetime.utcnow)
     resolved_at = Column(DateTime, nullable=True)
     details = Column(JSON, nullable=True)

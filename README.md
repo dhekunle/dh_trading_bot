@@ -6,9 +6,10 @@ Modular trading signal bot converted from Telegram-only to a full web dashboard 
 - Twelve Data for market data
 - All original filters (choppiness, session quality, news, M5/M15, ADX, etc.)
 - Groq HIGH-confidence confirmation
-- Web dashboard only (no Telegram required)
-- Preview signals, activate them, log WIN/LOSS, view stats, pause/resume
-- All original filters and protections
+- Home page with Real Market and OTC Market options
+- Real market: session filters, high-quality signals
+- OTC market: 2 martingale levels, next signal 3 minutes after previous result
+- Dashboard for each market with activate / WIN / LOSS logging, stats, pause, auto-scan
 - SQLite database
 - Protections: blacklists, cooldowns, consecutive loss pause
 
