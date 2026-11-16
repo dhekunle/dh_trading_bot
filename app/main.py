@@ -26,13 +26,36 @@ scanning = False
 async def dashboard(request: Request, db: Session = Depends(get_db)):
     sessions, quality, reason = engine.get_session_quality()
     stats = db.query(Stats).order_by(Stats.id.desc()).first()
-    recent = db.query(Trade).order_by(Trade.id.desc()).limit(15).all()
+    recent_trades = db.query(Trade).order_by(Trade.id.desc()).limit(15).all()
+    
+    # Convert to plain dicts so Jinja doesn't choke on JSON fields
+    recent = []
+    for t in recent_trades:
+        recent.append({
+            "id": t.id,
+            "trade_number": t.trade_number,
+            "asset": t.asset,
+            "action": t.action,
+            "expiry_mins": t.expiry_mins,
+            "status": t.status or "pending",
+            "result": t.result
+        })
+    
+    stats_data = None
+    if stats:
+        stats_data = {
+            "wins": stats.wins or 0,
+            "losses": stats.losses or 0,
+            "draws": stats.draws or 0,
+            "trade_number": stats.trade_number or 1
+        }
+    
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "quality": quality,
         "reason": reason,
         "sessions": ", ".join(sessions) if sessions else "None",
-        "stats": stats,
+        "stats": stats_data,
         "recent": recent,
         "paused": bot_paused,
         "scanning": scanning,
