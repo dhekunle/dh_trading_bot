@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+requests
+pandas
+pandas-ta
+groq
+pytz
+numpy
+sqlalchemy
+jinja2
+python-multipart
+aiofiles
