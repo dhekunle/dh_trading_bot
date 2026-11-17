@@ -3,13 +3,14 @@
 Modular trading signal bot converted from Telegram-only to a full web dashboard + Telegram.
 
 ## Features
-- Twelve Data for market data
+- Yahoo Finance prices (cached and shared by both bots, with rate limit protection)
 - All original filters (choppiness, session quality, news, M5/M15, ADX, etc.)
 - Groq HIGH-confidence confirmation
-- Home page with Real Market and OTC Market options
-- Real market: session filters, high-quality signals
-- OTC market: 2 martingale levels, next signal 3 minutes after previous result
-- Dashboard for each market with activate / WIN / LOSS logging, stats, pause, auto-scan
+- Home page with Patience Bot and 3 min Bot
+- Patience Bot: session filters, high quality signals
+- 3 min Bot: high volatility mode, 2 martingale levels, next signal 3 minutes after the previous result
+- Dashboard for each bot with ACTIVATE / SKIP / WIN / LOSS, stats, pause, auto scan and a live scan status line
+- /status shows price data health and why a bot is not signalling
 - SQLite database
 - Protections: blacklists, cooldowns, consecutive loss pause
 
@@ -34,5 +35,6 @@ Modular trading signal bot converted from Telegram-only to a full web dashboard 
 
 ## Notes
 - Rotate any keys that were previously exposed.
-- Start with Twelve Data Grow plan ($29/mo recommended).
+- A signal is only posted to Telegram after you tap ACTIVATE. Unactivated signals expire after 10 minutes.
+- Only one open signal per bot at a time. Log its result to unlock the next scan.
 - The scanner runs in the background once started from the dashboard.
