@@ -7,6 +7,7 @@ import pandas as pd
 import pandas_ta_classic as ta
 import pytz
 from typing import Dict, List, Optional, Tuple
+from .yf_data import get_history
 from .config import GROQ_API_KEY
 try:
     from groq import Groq
