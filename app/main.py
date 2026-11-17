@@ -9,7 +9,11 @@ import asyncio
 from .database import init_db, get_db, Trade, Stats
 from .signal_engine import SignalEngine
 import requests
-from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_CHAT_ID_3MIN, MY_PERSONAL_CHAT_ID
+from .config import (
+    TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_3MIN,
+    TELEGRAM_CHAT_ID, TELEGRAM_CHAT_ID_3MIN,
+    MY_PERSONAL_CHAT_ID, MY_PERSONAL_CHAT_ID_3MIN
+)
 
 app = FastAPI(title="Patience Bot & 3 min Bot")
 
@@ -31,21 +35,18 @@ auto_scan_3min = True
 last_3min_result_time = None
 three_min_martingale_level = 0  # 0, 1, or 2
 
-def get_chat_id_for_market(market_type: str) -> str:
+def get_token_and_chat(market_type: str):
     if market_type == "3min":
-        return TELEGRAM_CHAT_ID_3MIN or TELEGRAM_CHAT_ID
-    return TELEGRAM_CHAT_ID
+        return TELEGRAM_BOT_TOKEN_3MIN or TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID_3MIN or TELEGRAM_CHAT_ID, MY_PERSONAL_CHAT_ID_3MIN or MY_PERSONAL_CHAT_ID
+    return TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, MY_PERSONAL_CHAT_ID
 
-def send_telegram(text: str, chat_id: str = None):
-    """Send a message to Telegram."""
-    if not TELEGRAM_BOT_TOKEN:
-        return
-    target = chat_id
-    if not target:
+def send_telegram(text: str, token: str, chat_id: str):
+    """Send a message using the given bot token and chat ID."""
+    if not token or not chat_id:
         return
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": target, "text": text, "parse_mode": "HTML"}, timeout=10)
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=10)
     except Exception as e:
         print(f"Telegram send error: {e}")
 
@@ -261,11 +262,11 @@ async def post_signal(trade_id: int, db: Session = Depends(get_db)):
         return RedirectResponse("/", status_code=303)
     trade.status = "active"
     db.commit()
-    # Post to the correct Telegram group
-    chat_id = get_chat_id_for_market(trade.market_type)
-    send_telegram(build_signal_message(trade), chat_id)
-    if MY_PERSONAL_CHAT_ID:
-        send_telegram(f"Activated: {trade.asset} {trade.action}", MY_PERSONAL_CHAT_ID)
+    # Post to the correct Telegram group using the correct token
+    token, chat_id, personal_id = get_token_and_chat(trade.market_type)
+    send_telegram(build_signal_message(trade), token, chat_id)
+    if personal_id:
+        send_telegram(f"Activated: {trade.asset} {trade.action}", token, personal_id)
     redir = "/3min" if trade.market_type == "3min" else "/patience"
     return RedirectResponse(redir, status_code=303)
 
@@ -294,10 +295,10 @@ async def log_result(trade_id: int, result: str = Form(...), db: Session = Depen
     db.commit()
     # Post result to the correct Telegram group
     result_msg = f"Trade #{trade.trade_number} - {result.upper()}!\n{trade.asset} {trade.action}"
-    chat_id = get_chat_id_for_market(trade.market_type)
-    send_telegram(result_msg, chat_id)
-    if MY_PERSONAL_CHAT_ID:
-        send_telegram(result_msg, MY_PERSONAL_CHAT_ID)
+    token, chat_id, personal_id = get_token_and_chat(trade.market_type)
+    send_telegram(result_msg, token, chat_id)
+    if personal_id:
+        send_telegram(result_msg, token, personal_id)
     
     if trade.market_type == "3min":
         global last_3min_result_time, three_min_martingale_level

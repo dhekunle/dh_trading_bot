@@ -7,7 +7,12 @@ import pandas as pd
 import pandas_ta_classic as ta
 import pytz
 from typing import Dict, List, Optional, Tuple
-from .yf_data import get_history
+from .config import GROQ_API_KEY
+try:
+    from groq import Groq
+    groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+except Exception:
+    groq_client = None
 
 WAT = pytz.timezone("Africa/Lagos")
 
