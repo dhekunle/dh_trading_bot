@@ -91,7 +91,11 @@ th, td { text-align: left; padding: 8px; border-bottom: 1px solid #2d313c; }
 </style>
 '''
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/health", methods=["GET", "HEAD"])
+async def health():
+    return {"status": "ok"}
+
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def home():
     html = f'''<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Signal Bots</title>{STYLE}</head>
