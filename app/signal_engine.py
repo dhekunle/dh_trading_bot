@@ -7,23 +7,21 @@ import pandas as pd
 import pandas_ta_classic as ta
 import pytz
 from typing import Dict, List, Optional, Tuple
-from .data_source import TwelveDataClient
-from .config import TWELVE_DATA_API_KEY
+from .yf_data import get_history
 
 WAT = pytz.timezone("Africa/Lagos")
 
 PAIRS = {
-    "EUR/USD": "EUR/USD", "GBP/USD": "GBP/USD", "USD/JPY": "USD/JPY",
-    "AUD/USD": "AUD/USD", "AUD/JPY": "AUD/JPY", "USD/CAD": "USD/CAD",
-    "EUR/JPY": "EUR/JPY", "GBP/JPY": "GBP/JPY", "CHF/JPY": "CHF/JPY",
-    "GBP/AUD": "GBP/AUD", "CAD/CHF": "CAD/CHF", "USD/CHF": "USD/CHF",
-    "CAD/JPY": "CAD/JPY", "AUD/CHF": "AUD/CHF", "EUR/GBP": "EUR/GBP",
-    "GBP/CAD": "GBP/CAD", "AUD/CAD": "AUD/CAD",
+    "EUR/USD": "EURUSD=X", "GBP/USD": "GBPUSD=X", "USD/JPY": "USDJPY=X",
+    "AUD/USD": "AUDUSD=X", "AUD/JPY": "AUDJPY=X", "USD/CAD": "USDCAD=X",
+    "EUR/JPY": "EURJPY=X", "GBP/JPY": "GBPJPY=X", "CHF/JPY": "CHFJPY=X",
+    "GBP/AUD": "GBPAUD=X", "CAD/CHF": "CADCHF=X", "USD/CHF": "USDCHF=X",
+    "CAD/JPY": "CADJPY=X", "AUD/CHF": "AUDCHF=X", "EUR/GBP": "EURGBP=X",
+    "GBP/CAD": "GBPCAD=X", "AUD/CAD": "AUDCAD=X",
 }
 
 class SignalEngine:
     def __init__(self):
-        self.client = TwelveDataClient(TWELVE_DATA_API_KEY)
         self.blacklisted_pairs = {}
         self.win_cooldown_pairs = {}
         self.skipped_pairs = {}
@@ -115,7 +113,7 @@ class SignalEngine:
             if pair_name in self.blacklisted_pairs or pair_name in self.win_cooldown_pairs or pair_name in self.skipped_pairs:
                 continue
             try:
-                hist = self.client.get_time_series(symbol, "1min", 150)
+                hist = get_history(symbol, "2d", "1m")
                 if hist is None or len(hist) < 120:
                     continue
                 close = hist["Close"]
