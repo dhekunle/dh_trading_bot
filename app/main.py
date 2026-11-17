@@ -8,6 +8,7 @@ import pytz
 import asyncio
 from .database import init_db, get_db, Trade, Stats
 from .signal_engine import SignalEngine
+from .signal_engine_3min import SignalEngine3Min
 import requests
 from .config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_3MIN,
