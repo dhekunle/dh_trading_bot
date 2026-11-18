@@ -355,7 +355,7 @@ def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: d
     def bot_card(path, name, key):
         info = esc(bot_info.get(key, ""))
         return (f'<a class="card hub-card" href="{path}"><h3>{name} controls</h3>'
-                f'<p>Scan, activate signals, log results.</p><p style="margin-top:10px;font-size:.82rem">{info}</p></a>')
+                f'<p>Monitor performance, control scanning, and skip published signals.</p><p style="margin-top:10px;font-size:.82rem">{info}</p></a>')
     approval = "Approval required for new accounts" if require_approval else "New accounts get access straight away"
     body = f"""
 {topbar(right)}

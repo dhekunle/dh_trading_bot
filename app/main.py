@@ -168,28 +168,10 @@ def build_signal_message(trade: Trade, now=None) -> str:
 
 STYLE = '''
 <style>
-:root { --bg: #0f1117; --card: #1a1d27; --text: #e4e6eb; --accent: #3b82f6; --green: #22c55e; --red: #ef4444; }
-body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
-.container { max-width: 1100px; margin: 0 auto; }
-h1 { margin-bottom: 8px; }
-.card { background: var(--card); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.btn { background: var(--accent); color: white; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600; text-decoration: none; display: inline-block; }
-.btn:hover { opacity: 0.9; }
-.btn-green { background: var(--green); }
-.btn-red { background: var(--red); }
-.btn-gray { background: #4b5563; }
-.btn-3min { background: #8b5cf6; }
-.status { font-size: 0.9em; color: #9ca3af; }
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 8px; border-bottom: 1px solid #2d313c; }
-.pending { color: #fbbf24; }
-.skipped, .expired { color: #9ca3af; }
-.win { color: var(--green); }
-.loss { color: var(--red); }
-.home-options { display: flex; gap: 24px; justify-content: center; margin-top: 60px; flex-wrap: wrap; }
-.home-card { background: var(--card); border-radius: 16px; padding: 40px; width: 300px; text-align: center; }
-.home-card h2 { margin-top: 0; }
+:root{color-scheme:dark;--bg:#090a0f;--line:#292d3b;--text:#eef0f6;--muted:#9299aa;--purple:#9b7bff;--green:#27cf83;--red:#ff5368;--amber:#f3bd4f}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 82% -10%,#211a3b 0,transparent 35%),var(--bg);color:var(--text);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;padding:24px}.container{max-width:1180px;margin:0 auto}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.brand{display:flex;align-items:center;gap:14px}.mark{width:48px;height:48px;border:1px solid #4b3c78;border-radius:15px;display:grid;place-items:center;color:var(--purple);font-size:24px;background:#171322}.brand h1{font-size:25px;line-height:1.1;margin:0}.brand p{margin:5px 0 0;color:var(--muted);font-size:13px}.adminlink{color:#c7b9ff;text-decoration:none;border:1px solid var(--line);background:#151722;padding:10px 14px;border-radius:12px}.statusbar{display:grid;grid-template-columns:1.1fr 1.3fr .8fr;background:linear-gradient(120deg,#151622,#10121a);border:1px solid var(--line);border-radius:18px;padding:17px 18px;margin-bottom:14px}.statusitem{padding:0 18px;border-right:1px solid var(--line)}.statusitem:first-child{padding-left:0}.statusitem:last-child{border:0}.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:700}.value{font-size:17px;font-weight:700;margin-top:4px}.muted{color:var(--muted)}.green{color:var(--green)}.red{color:var(--red)}.purple{color:var(--purple)}.amber{color:var(--amber)}.notice{background:#121827;border:1px solid #293b60;color:#b9c8e9;border-radius:14px;padding:13px 16px;margin-bottom:18px;font-size:13px}.notice strong{color:#e6ebff}.layout{display:grid;grid-template-columns:1.05fr .95fr;gap:16px;margin-bottom:16px}.panel{background:linear-gradient(145deg,rgba(24,26,38,.98),rgba(14,16,23,.98));border:1px solid var(--line);border-radius:20px;padding:20px;box-shadow:0 12px 36px #0003}.panelhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:17px}.panelhead h2{font-size:17px;margin:0}.chip{border:1px solid #383149;color:#c8baff;background:#1b1728;padding:5px 9px;border-radius:99px;font-size:11px;font-weight:700}.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}.btn{display:flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:12px 14px;border:1px solid var(--line);border-radius:13px;background:#202331;color:var(--text);font-weight:700;font-size:13px;text-decoration:none;cursor:pointer}.btn:hover{filter:brightness(1.12)}.btn-primary{background:linear-gradient(110deg,#7654d6,#4c3a8d);border-color:#8066ce}.btn-green{background:#123528;border-color:#236c4d;color:#7ce4b1}.btn-danger{background:#351b25;border-color:#713344;color:#ff9aaa}.btn:disabled{opacity:.4}.botstate{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:13px;margin-top:15px}.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 12px #27cf8377}.statsgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.stat{background:#0e1018;border:1px solid #242838;border-radius:14px;padding:13px 12px;min-width:0}.stat .num{font-size:25px;font-weight:750;letter-spacing:-.04em;margin-top:4px}.stat .label{font-size:11px;color:var(--muted)}.ratebar{height:5px;border-radius:5px;background:#282b39;margin-top:9px;overflow:hidden}.ratebar span{display:block;height:100%;background:var(--purple);border-radius:5px}.tablewrap{overflow-x:auto}.signals{width:100%;border-collapse:collapse;min-width:620px}.signals th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.09em;padding:11px 10px;border-bottom:1px solid var(--line)}.signals td{padding:13px 10px;border-bottom:1px solid #222633;font-size:13px}.signals tr:last-child td{border-bottom:0}.asset{font-weight:750;letter-spacing:.02em}.tag{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:8px;font-size:11px;font-weight:800;background:#202332;color:#cbd0df}.tag.buy,.tag.win{background:#123528;color:#70e1aa}.tag.sell,.tag.loss{background:#381d28;color:#ff9aaa}.tag.pending{background:#352b19;color:#f4ca70}.tag.skipped,.tag.expired,.tag.draw{background:#242735;color:#adb4c8}.rowactions{display:flex;gap:6px;align-items:center}.mini{padding:6px 9px;min-height:30px;font-size:11px;border-radius:8px}.footerline{color:var(--muted);font-size:11px;margin:15px 2px 0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.empty{text-align:center;color:var(--muted);padding:28px!important}
+@media(max-width:760px){body{padding:15px}.brand h1{font-size:21px}.statusbar{grid-template-columns:1fr 1fr;row-gap:14px}.statusitem{padding:0 10px}.statusitem:nth-child(2){border:0}.statusitem:last-child{grid-column:1/-1;padding-left:0;border-top:1px solid var(--line);padding-top:12px}.layout{grid-template-columns:1fr}.statsgrid{grid-template-columns:repeat(2,1fr)}.panel{padding:16px}.controls{gap:8px}.btn{font-size:12px;padding:10px 8px}}
+@media(max-width:390px){.statusbar{grid-template-columns:1fr}.statusitem,.statusitem:nth-child(2){padding:0;border:0}.statusitem:last-child{grid-column:auto}.controls{grid-template-columns:1fr 1fr}}
 </style>
 '''
 
@@ -198,95 +180,70 @@ async def health():
     return {"status": "ok"}
 
 def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quality_info=None, engine=None):
-    trades = db.query(Trade).filter(Trade.market_type == market).order_by(Trade.id.desc()).limit(15).all()
+    trades = db.query(Trade).filter(Trade.market_type == market).order_by(Trade.id.desc()).limit(20).all()
     stats = db.query(Stats).order_by(Stats.id.desc()).first()
-    
-    stats_html = "<p>No stats yet</p>"
-    if stats:
-        stats_html = f"<p>Wins: {stats.wins or 0} · Losses: {stats.losses or 0} · Draws: {stats.draws or 0}</p><p>Next Trade #: {stats.trade_number or 1}</p>"
-    
-    rows = ""
-    for t in trades:
-        status = t.status or "pending"
-        mg = f" (MG{t.martingale_level})" if t.martingale_level else ""
-        actions = ""
-        if status == "pending":
-            actions += f'<form action="/post/{t.id}" method="post" style="display:inline;"><button class="btn btn-green" style="padding:6px 12px;font-size:0.85em;">ACTIVATE</button></form> <form action="/skip/{t.id}" method="post" style="display:inline;"><button class="btn btn-gray" style="padding:6px 12px;font-size:0.85em;">SKIP</button></form> '
-        if status in ["pending", "active"]:
-            actions += f'''
-            <form action="/result/{t.id}" method="post" style="display:inline;"><input type="hidden" name="result" value="WIN"><button class="btn btn-green" style="padding:6px 10px;font-size:0.8em;">W</button></form>
-            <form action="/result/{t.id}" method="post" style="display:inline;"><input type="hidden" name="result" value="LOSS"><button class="btn btn-red" style="padding:6px 10px;font-size:0.8em;">L</button></form>
-            '''
-        rows += f'''
-        <tr>
-            <td>{t.trade_number}{mg}</td>
-            <td>{t.asset}</td>
-            <td>{t.action}</td>
-            <td>{t.expiry_mins}m</td>
-            <td class="{status}">{status.upper()}</td>
-            <td>{actions}</td>
-        </tr>
-        '''
-    
-    pause_label = "Resume" if paused else "Pause"
-    bot_status = "PAUSED" if paused else "ACTIVE"
-    auto_status = "ON" if auto_on else "OFF"
-    now = datetime.datetime.now(WAT).strftime("%Y-%m-%d %H:%M WAT")
+    wins = int((stats.wins or 0) if stats else 0)
+    losses = int((stats.losses or 0) if stats else 0)
+    draws = int((stats.draws or 0) if stats else 0)
+    total = wins + losses + draws
+    decided = wins + losses
+    win_rate = round(wins * 100 / decided) if decided else 0
+    next_trade = int((stats.trade_number or 1) if stats else 1)
     title = "Patience Bot" if market == "patience" else "3 min Bot"
-    back = '<a href="/admin" class="status">← Admin</a>'
-    
-    q_info = ""
-    if quality_info:
-        sessions, quality, reason = quality_info
-        q_info = f" · Session: {', '.join(sessions) if sessions else 'None'} · Quality: <strong>{quality}</strong> ({reason})"
-    
-    vol_tag = ""
-    if engine is not None and getattr(engine, "high_volatility_mode", False):
-        vol_tag = " · STRICT MODE (High Volatility)"
-    
-    scan_line = ""
+    now = datetime.datetime.now(WAT).strftime("%a, %d %b %Y · %H:%M WAT")
+    sessions, quality, reason = quality_info or ([], "UNKNOWN", "Session status unavailable")
+    session_text = ", ".join(sessions) if sessions else "No active session"
+    q_class = "amber" if quality == "AVOID" else ("green" if quality not in ("CLOSED", "UNKNOWN") else "muted")
+    auto_status = "ON" if auto_on else "OFF"
+    bot_status = "PAUSED" if paused else "ACTIVE"
+    scan_line = "Waiting for first scan"
     if engine is not None:
         when = engine.last_scan_at.strftime("%H:%M:%S") if engine.last_scan_at else "never"
-        groq_state = "Groq OK" if engine.groq_configured else "Groq key missing"
-        scan_line = htmllib.escape(f"Last scan {when}: {engine.last_scan_info} · {yf_data.summary()} · {groq_state} · {telegram_status.get(market, '')}")
-
-    html = f'''<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="30"><title>{title}</title>{STYLE}</head>
-<body><div class="container">
-    <h1>{title} {back}</h1>
-    <p class="status">{now}{q_info}{vol_tag} · Auto-scan: {auto_status}</p>
-    <p class="status">{scan_line}</p>
-    <div class="grid">
-        <div class="card">
-            <h3>Controls</h3>
-            <form action="/scan/{market}" method="post" style="display:inline;">
-                <button class="btn" {"disabled" if paused else ""}>Scan Now</button>
-            </form>
-            <form action="/admin/telegram-test/{market}" method="post" style="display:inline; margin-left:8px;">
-                <button class="btn btn-gray">Test Telegram</button>
-            </form>
-            <form action="/pause/{market}" method="post" style="display:inline; margin-left:8px;">
-                <button class="btn btn-gray">{pause_label}</button>
-            </form>
-            <form action="/toggle-auto/{market}" method="post" style="display:inline; margin-left:8px;">
-                <button class="btn btn-gray">Auto: {auto_status}</button>
-            </form>
-            <p class="status" style="margin-top:12px;">Bot is {bot_status}</p>
-        </div>
-        <div class="card">
-            <h3>Stats</h3>
-            {stats_html}
-        </div>
-    </div>
-    <div class="card">
-        <h3>Recent Signals</h3>
-        <table>
-            <tr><th>#</th><th>Asset</th><th>Action</th><th>Expiry</th><th>Status</th><th>Actions</th></tr>
-            {rows if rows else "<tr><td colspan='6'>No signals yet</td></tr>"}
-        </table>
-    </div>
-</div></body></html>'''
+        groq_state = "Groq connected" if engine.groq_configured else "Groq key missing"
+        scan_line = f"Last scan {when}: {engine.last_scan_info} · {yf_data.summary()} · {groq_state} · {telegram_status.get(market, '')}"
+    scan_line = htmllib.escape(scan_line)
+    vol_text = " · Strict volatility mode" if engine is not None and getattr(engine, "high_volatility_mode", False) else ""
+    rows = []
+    for t in trades:
+        status = (t.status or "pending").lower()
+        result = (t.result or "").lower()
+        action_class = "buy" if (t.action or "").upper() == "BUY" else "sell"
+        status_class = result if result in ("win", "loss", "draw") else status
+        mg = f" · MG{int(t.martingale_level)}" if t.martingale_level else ""
+        actions = []
+        if status == "active" and not t.result:
+            actions.append(f'<form action="/skip/{t.id}" method="post"><button class="btn btn-danger mini" type="submit">Skip</button></form>')
+            actions.append(f'<form action="/result/{t.id}" method="post"><input type="hidden" name="result" value="WIN"><button class="btn btn-green mini" type="submit">Win</button></form>')
+            actions.append(f'<form action="/result/{t.id}" method="post"><input type="hidden" name="result" value="LOSS"><button class="btn btn-danger mini" type="submit">Loss</button></form>')
+            actions.append(f'<form action="/result/{t.id}" method="post"><input type="hidden" name="result" value="DRAW"><button class="btn mini" type="submit">Draw</button></form>')
+        elif status == "pending":
+            actions.append(f'<form action="/post/{t.id}" method="post"><button class="btn btn-primary mini" type="submit">Post</button></form>')
+            actions.append(f'<form action="/skip/{t.id}" method="post"><button class="btn btn-danger mini" type="submit">Skip</button></form>')
+        asset = htmllib.escape(str(t.asset or "—"))
+        action = htmllib.escape(str(t.action or "—").upper())
+        rows.append(f'<tr><td>#{int(t.trade_number or 0)}{mg}</td><td class="asset">{asset}</td><td><span class="tag {action_class}">{action}</span></td><td>{int(t.expiry_mins or 0)}m</td><td><span class="tag {status_class}">{htmllib.escape((t.result or status).upper())}</span></td><td><div class="rowactions">{"".join(actions) or "<span class=muted>—</span>"}</div></td></tr>')
+    rows_html = "".join(rows) if rows else '<tr><td colspan="6" class="empty">No signals recorded yet</td></tr>'
+    pause_label = "Resume bot" if paused else "Pause bot"
+    pause_class = "btn-green" if paused else ""
+    html = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090a0f"><meta http-equiv="refresh" content="20"><title>{title} · Admin</title>{STYLE}</head>
+<body><main class="container">
+<header class="top"><div class="brand"><div class="mark">⌁</div><div><h1>{title}</h1><p>DH Binary Trader <span class="muted">/ Operations console</span></p></div></div><a class="adminlink" href="/admin">← Admin hub</a></header>
+<section class="statusbar"><div class="statusitem"><div class="eyebrow">Market session</div><div class="value">{htmllib.escape(session_text)}</div><div class="muted" style="font-size:12px">{now}</div></div><div class="statusitem"><div class="eyebrow">Market quality</div><div class="value {q_class}">{htmllib.escape(str(quality))}</div><div class="muted" style="font-size:12px">{htmllib.escape(str(reason))}{htmllib.escape(vol_text)}</div></div><div class="statusitem"><div class="eyebrow">Auto scan · Bot</div><div class="value {'green' if auto_on and not paused else 'amber'}">{auto_status} · {bot_status}</div><div class="muted" style="font-size:12px">Next trade #{next_trade}</div></div></section>
+<div class="notice"><strong>System status</strong> · {scan_line}</div>
+<section class="layout"><article class="panel"><div class="panelhead"><h2>Bot controls</h2><span class="chip">{bot_status}</span></div><div class="controls">
+<form action="/scan/{market}" method="post"><button class="btn btn-primary" type="submit" {'disabled' if paused else ''}>↻ &nbsp; Scan now</button></form>
+<form action="/admin/telegram-test/{market}" method="post"><button class="btn" type="submit">➤ &nbsp; Test Telegram</button></form>
+<form action="/pause/{market}" method="post"><button class="btn {pause_class}" type="submit">Ⅱ &nbsp; {pause_label}</button></form>
+<form action="/toggle-auto/{market}" method="post"><button class="btn" type="submit">Auto-scan: <span class="{'green' if auto_on else 'amber'}">{auto_status}</span></button></form>
+</div><div class="botstate"><span class="dot" style="background:{'var(--amber)' if paused else 'var(--green)'}"></span>{'Bot is paused. Automatic scanning is suspended.' if paused else 'Bot is running. Qualified signals publish automatically to Telegram.'}</div></article>
+<article class="panel"><div class="panelhead"><h2>Performance summary</h2><span class="chip">All recorded results</span></div><div class="statsgrid">
+<div class="stat"><div class="label">WINS</div><div class="num green">{wins}</div></div><div class="stat"><div class="label">LOSSES</div><div class="num red">{losses}</div></div><div class="stat"><div class="label">DRAWS</div><div class="num">{draws}</div></div><div class="stat"><div class="label">WIN RATE</div><div class="num purple">{win_rate}%</div><div class="ratebar"><span style="width:{win_rate}%"></span></div></div>
+</div><div class="footerline"><span>{total} results recorded</span><span>Next trade #{next_trade}</span></div></article></section>
+<section class="panel"><div class="panelhead"><h2>Recent signals</h2><span class="chip">Latest {len(trades)} records</span></div><div class="tablewrap"><table class="signals"><thead><tr><th>Trade</th><th>Asset</th><th>Direction</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows_html}</tbody></table></div><div class="footerline"><span>Signals are published automatically after passing all bot filters.</span><span>Skip is available here after publication.</span></div></section>
+<footer class="footerline"><span>DH Binary Trader · {title}</span><span>{htmllib.escape(telegram_status.get(market, 'Telegram status unavailable'))}</span></footer>
+</main></body></html>'''
     return html
+
 
 @app.get("/admin/patience", response_class=HTMLResponse)
 async def patience_dashboard(db: Session = Depends(get_db)):
@@ -311,7 +268,7 @@ async def start_scan(market: str):
 @app.post("/skip/{trade_id}")
 async def skip_signal(trade_id: int, db: Session = Depends(get_db)):
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
-    if not trade or trade.status != "pending":
+    if not trade or trade.status not in ("pending", "active") or trade.result:
         return RedirectResponse("/admin", status_code=303)
     trade.status = "skipped"
     db.commit()
@@ -709,7 +666,7 @@ def scan_market(market: str):
             ).order_by(Trade.id.desc()).first()
             if open_trade:
                 if open_trade.status == "pending":
-                    engine.set_info(f"Signal #{open_trade.trade_number} {open_trade.asset} {open_trade.action} is waiting for ACTIVATE or SKIP")
+                    engine.set_info(f"Legacy signal #{open_trade.trade_number} is pending manual posting or skip")
                 else:
                     engine.set_info(f"Waiting for you to log the result of trade #{open_trade.trade_number} ({open_trade.asset})")
                 return
@@ -741,19 +698,39 @@ def scan_market(market: str):
             last = db.query(Stats).order_by(Stats.id.desc()).first()
             tnum = last.trade_number if last and last.trade_number else 1
             level = three_min_martingale_level if market == "3min" else 0
+            # Publish immediately: no admin approval or click-to-activate delay.
+            now = datetime.datetime.now(WAT)
+            entry = now + datetime.timedelta(minutes=1)
+            expire = entry + datetime.timedelta(minutes=expiry)
+            mart_entry = expire + datetime.timedelta(minutes=1)
+            mart_expire = mart_entry + datetime.timedelta(minutes=expiry)
+            data.update({k: v.astimezone(datetime.timezone.utc).isoformat() for k, v in {
+                "activated_at": now, "entry_at": entry, "expire_at": expire,
+                "mart_entry_at": mart_entry, "mart_expire_at": mart_expire}.items()})
             trade = Trade(
                 trade_number=tnum, asset=asset, action=direction, expiry_mins=expiry,
-                price=data["price"], confidence="High", status="pending", details=data,
+                price=data["price"], confidence="High", status="active", details=data,
                 market_type=market, martingale_level=level, is_martingale=level > 0,
             )
             db.add(trade)
             db.commit()
-            engine.set_info(f"Signal #{tnum} {asset} {direction} ready, waiting for ACTIVATE")
-            print(f"[{engine.name}] SIGNAL {asset} {direction} {expiry}min")
+            db.refresh(trade)
+            posted = send_telegram(build_signal_message(trade, now), token, chat_id, market=market)
+            details = dict(trade.details or {})
+            details["telegram_posted"] = bool(posted)
+            details["telegram_posted_at"] = now.astimezone(datetime.timezone.utc).isoformat() if posted else None
+            trade.details = details
+            db.commit()
+            engine.set_info(
+                f"Signal #{tnum} {asset} {direction} published to Telegram" if posted
+                else f"Signal #{tnum} {asset} {direction} generated, but Telegram posting failed"
+            )
+            print(f"[{engine.name}] SIGNAL {asset} {direction} {expiry}min | Telegram: {'OK' if posted else 'FAILED'}")
             if personal_id:
                 send_telegram(
-                    f"{engine.name}: new signal ready\n{asset} {direction} ({expiry} min)\n"
-                    f"Open the dashboard and tap ACTIVATE to post it.",
+                    f"{engine.name}: signal {'published' if posted else 'generated; group post failed'}\n"
+                    f"{asset} {direction} ({expiry} min).\n"
+                    f"Use Skip in the admin dashboard if you do not want to track this trade.",
                     token, personal_id,
                 )
         finally:
