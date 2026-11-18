@@ -147,8 +147,13 @@ input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,140,255,.22)}
 .dash-head h1{font-size:1.5rem;letter-spacing:-.5px}
 .dash-head p{color:var(--muted);font-size:.9rem}
 .tools{display:flex;gap:8px;flex-wrap:wrap}
-.statrow{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-bottom:24px}
-@media(max-width:560px){.statrow{grid-template-columns:1fr}}
+.botgrid{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+@media(max-width:900px){.botgrid{grid-template-columns:1fr;gap:34px}}
+.botcol{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:20px}
+.colhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.colhead h2{font-size:1.15rem;letter-spacing:-.3px}
+.botcol .sec-title{margin:18px 0 10px}
+.botcol .live-card{background:rgba(0,0,0,.22)}
 .statbox{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
 .statbox small{color:var(--muted);font-size:.74rem;letter-spacing:1px;text-transform:uppercase;font-weight:700}
 .statbox .num{font-size:1.5rem;font-weight:850;letter-spacing:-.5px;margin-top:3px}

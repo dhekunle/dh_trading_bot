@@ -82,19 +82,61 @@ def admin_path(market: str) -> str:
     return "/admin/3min" if market == "3min" else "/admin/patience"
 
 def get_token_and_chat(market_type: str):
+    """Returns (bot token, group chat id, personal chat id) for a bot.
+
+    The 3 min Bot may have its own Telegram bot and group. A token and a group are never
+    mixed between the two bots: if the 3 min token is set, the 3 min group must be set too.
+    """
     if market_type == "3min":
-        return TELEGRAM_BOT_TOKEN_3MIN or TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID_3MIN or TELEGRAM_CHAT_ID, MY_PERSONAL_CHAT_ID_3MIN or MY_PERSONAL_CHAT_ID
+        if TELEGRAM_BOT_TOKEN_3MIN or TELEGRAM_CHAT_ID_3MIN:
+            return (TELEGRAM_BOT_TOKEN_3MIN or TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID_3MIN,
+                    MY_PERSONAL_CHAT_ID_3MIN or MY_PERSONAL_CHAT_ID)
     return TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, MY_PERSONAL_CHAT_ID
 
-def send_telegram(text: str, token: str, chat_id: str):
-    """Send a message using the given bot token and chat ID."""
-    if not token or not chat_id:
-        return
+telegram_status = {"patience": "Telegram: nothing posted yet", "3min": "Telegram: nothing posted yet"}
+
+TELEGRAM_HINTS = (
+    ("chat not found", "chat ID is wrong, or the bot was never added to that group"),
+    ("bot was kicked", "the bot was removed from the group, add it back as admin"),
+    ("not a member", "add the bot to the group as admin"),
+    ("not enough rights", "make the bot an admin that can post messages"),
+    ("have no rights", "make the bot an admin that can post messages"),
+    ("unauthorized", "the bot token is wrong"),
+    ("blocked by the user", "open the bot in Telegram and press Start"),
+)
+
+def send_telegram(text: str, token: str, chat_id: str, market: str = None) -> bool:
+    """Send a message. Pass market only for group posts so the dashboard can show the outcome."""
+    def note(message):
+        if market:
+            telegram_status[market] = message
+    stamp = datetime.datetime.now(WAT).strftime("%I:%M %p")
+    if not token:
+        note("Telegram FAILED: bot token is missing")
+        return False
+    if not chat_id:
+        note("Telegram FAILED: group chat ID is missing" + (" (TELEGRAM_CHAT_ID_3MIN)" if market == "3min" else ""))
+        return False
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=10)
+        r = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
+        try:
+            data = r.json()
+        except Exception:
+            data = {}
+        if r.status_code == 200 and data.get("ok"):
+            note(f"Telegram OK (last post {stamp})")
+            return True
+        reason = str(data.get("description") or f"HTTP {r.status_code}")
+        hint = next((h for key, h in TELEGRAM_HINTS if key in reason.lower()), "")
+        note(f"Telegram FAILED: {reason}" + (f" - {hint}" if hint else ""))
+        print(f"[TELEGRAM] {market or 'private'} failed: {reason}")
+        return False
     except Exception as e:
-        print(f"Telegram send error: {e}")
+        reason = str(e).replace(token, "***")[:150]
+        note(f"Telegram FAILED: {reason}")
+        print(f"[TELEGRAM] {market or 'private'} error: {reason}")
+        return False
 
 def build_signal_message(trade: Trade, now=None) -> str:
     """Group message in the same format as the original bots."""
@@ -206,7 +248,7 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
     if engine is not None:
         when = engine.last_scan_at.strftime("%H:%M:%S") if engine.last_scan_at else "never"
         groq_state = "Groq OK" if engine.groq_configured else "Groq key missing"
-        scan_line = htmllib.escape(f"Last scan {when}: {engine.last_scan_info} · {yf_data.summary()} · {groq_state}")
+        scan_line = htmllib.escape(f"Last scan {when}: {engine.last_scan_info} · {yf_data.summary()} · {groq_state} · {telegram_status.get(market, '')}")
 
     html = f'''<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="30"><title>{title}</title>{STYLE}</head>
@@ -219,6 +261,9 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
             <h3>Controls</h3>
             <form action="/scan/{market}" method="post" style="display:inline;">
                 <button class="btn" {"disabled" if paused else ""}>Scan Now</button>
+            </form>
+            <form action="/admin/telegram-test/{market}" method="post" style="display:inline; margin-left:8px;">
+                <button class="btn btn-gray">Test Telegram</button>
             </form>
             <form action="/pause/{market}" method="post" style="display:inline; margin-left:8px;">
                 <button class="btn btn-gray">{pause_label}</button>
@@ -294,7 +339,7 @@ async def post_signal(trade_id: int, db: Session = Depends(get_db)):
     db.commit()
     # Post to the correct Telegram group using the correct token
     token, chat_id, personal_id = get_token_and_chat(trade.market_type)
-    send_telegram(build_signal_message(trade, now), token, chat_id)
+    send_telegram(build_signal_message(trade, now), token, chat_id, market=trade.market_type)
     if personal_id:
         send_telegram(f"Activated: {trade.asset} {trade.action}", token, personal_id)
     redir = admin_path(trade.market_type)
@@ -329,7 +374,7 @@ async def log_result(trade_id: int, result: str = Form(...), db: Session = Depen
     # Post result to the correct Telegram group
     result_msg = f"Trade #{trade.trade_number} - {result}!\n{trade.asset} {trade.action}"
     token, chat_id, personal_id = get_token_and_chat(trade.market_type)
-    send_telegram(result_msg, token, chat_id)
+    send_telegram(result_msg, token, chat_id, market=trade.market_type)
     if personal_id:
         send_telegram(result_msg, token, personal_id)
 
@@ -337,7 +382,7 @@ async def log_result(trade_id: int, result: str = Form(...), db: Session = Depen
     engine = ENGINES.get(trade.market_type, patience_engine)
     cooldown_msg = engine.register_result(trade.asset, result)
     if cooldown_msg:
-        send_telegram(cooldown_msg, token, chat_id)
+        send_telegram(cooldown_msg, token, chat_id, market=trade.market_type)
         if personal_id:
             send_telegram(cooldown_msg, token, personal_id)
 
@@ -521,7 +566,9 @@ async def api_signals(request: Request, db: Session = Depends(get_db)):
         if user.is_active is False:
             return JSONResponse({"error": "account not active"}, status_code=403)
     live_states = ["active"] + RESOLVED
-    rows = db.query(Trade).filter(Trade.status.in_(live_states)).order_by(Trade.id.desc()).limit(40).all()
+    rows = []
+    for m in ("patience", "3min"):   # each bot gets its own latest results
+        rows += db.query(Trade).filter(Trade.market_type == m, Trade.status.in_(live_states)).order_by(Trade.id.desc()).limit(25).all()
     week_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
     recent = db.query(Trade).filter(Trade.status.in_(RESOLVED), Trade.created_at >= week_ago).all()
     stats = {m: {"wins": 0, "losses": 0, "draws": 0} for m in ("patience", "3min")}
@@ -562,7 +609,7 @@ async def admin_login_submit(request: Request, username: str = Form(""), passwor
 async def admin_home(db: Session = Depends(get_db)):
     users = db.query(User).all()
     waiting = len([u for u in users if u.is_active is False])
-    info = {m: e.last_scan_info for m, e in ENGINES.items()}
+    info = {m: f"{e.last_scan_info} · {telegram_status.get(m, '')}" for m, e in ENGINES.items()}
     return HTMLResponse(ui.admin_hub(len(users), waiting, REQUIRE_APPROVAL, info))
 
 @app.get("/admin/users", response_class=HTMLResponse)
@@ -579,6 +626,14 @@ async def admin_toggle_user(user_id: int, db: Session = Depends(get_db)):
         user.is_active = not (user.is_active is not False)
         db.commit()
     return RedirectResponse("/admin/users", status_code=303)
+
+@app.post("/admin/telegram-test/{market}")
+async def telegram_test(market: str):
+    m = "3min" if market == "3min" else "patience"
+    token, chat_id, _ = get_token_and_chat(m)
+    await asyncio.get_running_loop().run_in_executor(
+        None, lambda: send_telegram(f"Test message from DH Binary Trader ({ENGINES[m].name}). Telegram is connected.", token, chat_id, market=m))
+    return RedirectResponse(admin_path(m), status_code=303)
 
 # Old bookmarks
 @app.get("/patience")
@@ -620,13 +675,13 @@ def scan_market(market: str):
             if not news_warned[market]:
                 news_warned[market] = True
                 lines = [f"{n['country']} - {n['title']} at {n['time_str']}" for n in news_list]
-                send_telegram("TRADING PAUSED - HIGH IMPACT NEWS!\n" + "\n".join(lines) + f"\n\nResume at: {safe_str}", token, chat_id)
+                send_telegram("TRADING PAUSED - HIGH IMPACT NEWS!\n" + "\n".join(lines) + f"\n\nResume at: {safe_str}", token, chat_id, market=market)
                 if personal_id:
                     send_telegram(f"News! Signals paused.\nSafe after: {safe_str}", token, personal_id)
             return
         if news_warned[market]:
             news_warned[market] = False
-            send_telegram("News over! Signals resuming...", token, chat_id)
+            send_telegram("News over! Signals resuming...", token, chat_id, market=market)
             if personal_id:
                 send_telegram("Safe to trade!", token, personal_id)
 
@@ -730,6 +785,7 @@ async def status():
         blocked = bool(engine.groq_blocked_until and now < engine.groq_blocked_until)
         bots[market] = {
             "last_scan": engine.last_scan_info,
+            "telegram": telegram_status.get(market),
             "last_scan_at": engine.last_scan_at.isoformat() if engine.last_scan_at else None,
             "groq_configured": engine.groq_configured,
             "groq_limit_active": blocked,
@@ -747,7 +803,7 @@ async def startup_event():
     for market, engine in ENGINES.items():
         token, chat_id, personal_id = get_token_and_chat(market)
         engine.notifier = lambda text, t=token, p=personal_id: send_telegram(text, t, p)
-        engine.group_notifier = lambda text, t=token, c=chat_id: send_telegram(text, t, c)
+        engine.group_notifier = lambda text, t=token, c=chat_id, m=market: send_telegram(text, t, c, market=m)
     asyncio.create_task(background_scanner())
 
 if __name__ == "__main__":

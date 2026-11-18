@@ -26,10 +26,15 @@ class SignalEngine3Min(BaseEngine):
         super().__init__(GROQ_API_KEY_3MIN or GROQ_API_KEY)
         self.last_volatility_check = None
 
+    NORMAL_MIN_CONDITIONS = 3      # was 5 in the original script
+    STRICT_MIN_CONDITIONS = 5      # high volatility mode stays strict
+
     def get_min_conditions(self, quality: str) -> int:
         if self.high_volatility_mode:
-            return 5 if quality == "EXCELLENT" else 999
-        return super().get_min_conditions(quality)
+            return self.STRICT_MIN_CONDITIONS if quality == "EXCELLENT" else 999
+        if quality in ("EXCELLENT", "GOOD"):
+            return self.NORMAL_MIN_CONDITIONS
+        return 7
 
     def quality_blocked(self, quality: str) -> Optional[str]:
         if self.high_volatility_mode and quality == "GOOD":
@@ -99,6 +104,6 @@ class SignalEngine3Min(BaseEngine):
             print(f"[{self.name}] Volatility normalised")
             self._notify(
                 "Volatility normalised!\n\nReturning to normal mode:\n"
-                "EXCELLENT = 5 conditions\nGOOD = 5 conditions\nBoth sessions active again!"
+                "EXCELLENT = 3 conditions\nGOOD = 3 conditions\nBoth sessions active again!"
             )
             self._notify_group("Volatility normalised! Both sessions active again.")

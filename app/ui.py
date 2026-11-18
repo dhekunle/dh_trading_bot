@@ -202,7 +202,7 @@ def admin_login_page(error: str = "", not_configured: bool = False) -> str:
 # ------------------------------------------------------------- user dashboard
 DASH_JS = r"""
 (function(){
-  var offset = 0, seen = null, filter = 'all', lastJson = '', soundOn = true, flashTimer = null;
+  var offset = 0, seen = null, lastJson = '', soundOn = true, flashTimer = null;
   var timeFmt = new Intl.DateTimeFormat('en-US', {hour:'numeric', minute:'2-digit', hour12:true, timeZone:'Africa/Lagos'});
   var BOT = {patience:'Patience Bot', '3min':'3 min Bot'};
   function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -229,23 +229,24 @@ DASH_JS = r"""
   function row(s){
     var dir = s.action === 'BUY' ? 'buy' : 'sell', arrow = s.action === 'BUY' ? '&#9650;' : '&#9660;';
     return '<div class="row"><div class="t">' + t(s.posted_at).replace(' WAT','') + '</div>' +
-      '<div class="a"><b>' + esc(s.asset) + '</b><small>' + esc(BOT[s.market] || s.market) + ' &middot; ' + esc(s.expiry_mins) + ' min</small></div>' +
+      '<div class="a"><b>' + esc(s.asset) + '</b><small>' + esc(s.expiry_mins) + ' min trade</small></div>' +
       '<div class="d ' + dir + '">' + arrow + ' ' + esc(s.action) + '</div><div>' + resultChip(s) + '</div></div>';
   }
-  function statBox(name, st){
+  function statBox(st){
     var dec = st.wins + st.losses, rate = dec ? Math.round(st.wins * 100 / dec) + '%' : '-';
-    return '<div class="statbox"><small>' + name + ' &middot; last 7 days</small><div class="num">' + rate +
+    return '<div class="statbox"><small>Last 7 days</small><div class="num">' + rate +
       '<span>' + st.wins + 'W &middot; ' + st.losses + 'L &middot; ' + st.draws + 'D</span></div></div>';
   }
 
   function render(d){
-    var open = d.signals.filter(function(s){ return s.status === 'active'; });
-    var live = document.getElementById('live');
-    live.innerHTML = open.length ? open.map(liveCard).join('') :
-      '<div class="waiting"><div class="radar"></div><b style="color:var(--text)">Waiting for the next signal</b><br>The bots are scanning the market. This page updates by itself.</div>';
-    var list = d.signals.filter(function(s){ return filter === 'all' || s.market === filter; });
-    document.getElementById('feed').innerHTML = list.length ? list.map(row).join('') : '<div class="empty">No signals yet.</div>';
-    document.getElementById('stats').innerHTML = statBox('Patience Bot', d.stats.patience) + statBox('3 min Bot', d.stats['3min']);
+    ['patience', '3min'].forEach(function(m){
+      var mine = d.signals.filter(function(s){ return s.market === m; });
+      var open = mine.filter(function(s){ return s.status === 'active'; });
+      document.getElementById('live-' + m).innerHTML = open.length ? open.map(liveCard).join('') :
+        '<div class="waiting"><div class="radar"></div><b style="color:var(--text)">Waiting for the next signal</b><br>' + esc(BOT[m]) + ' is scanning the market.</div>';
+      document.getElementById('feed-' + m).innerHTML = mine.length ? mine.map(row).join('') : '<div class="empty">No results yet.</div>';
+      document.getElementById('stats-' + m).innerHTML = statBox(d.stats[m]);
+    });
     tick();
   }
   function tick(){
@@ -285,16 +286,10 @@ DASH_JS = r"""
       if (seen !== null){ d.signals.forEach(function(s){ if (s.status === 'active' && seen.indexOf(s.id) < 0) alertNew(s); }); }
       seen = ids;
       var j = JSON.stringify(d.signals) + JSON.stringify(d.stats);
-      if (j !== lastJson){ lastJson = j; window.__d = d; render(d); }
+      if (j !== lastJson){ lastJson = j; render(d); }
       document.getElementById('conn').textContent = 'Live';
     }).catch(function(){ document.getElementById('conn').textContent = 'Reconnecting...'; });
   }
-  document.getElementById('tabs').addEventListener('click', function(ev){
-    var b = ev.target.closest('.tab'); if (!b) return;
-    filter = b.dataset.f;
-    var all = document.querySelectorAll('.tab'); for (var i = 0; i < all.length; i++) all[i].classList.remove('on');
-    b.classList.add('on'); if (window.__d) render(window.__d);
-  });
   document.getElementById('alerts').addEventListener('click', function(){
     soundOn = !soundOn; this.textContent = soundOn ? 'Sound on' : 'Sound off';
     if (soundOn) beep();
@@ -315,16 +310,24 @@ def user_dashboard(email: str) -> str:
     <div><h1>Live signals</h1><p>Signed in as {esc(email)} &middot; <span id="conn">Connecting...</span></p></div>
     <div class="tools"><button id="alerts" class="btn btn-ghost btn-sm" type="button">Sound on</button></div>
   </div>
-  <div class="statrow" id="stats"></div>
-  <div class="sec-title">Live now</div>
-  <div id="live"></div>
-  <div class="sec-title">Recent signals</div>
-  <div class="tabs" id="tabs">
-    <button class="tab on" data-f="all" type="button">All</button>
-    <button class="tab" data-f="patience" type="button">Patience Bot</button>
-    <button class="tab" data-f="3min" type="button">3 min Bot</button>
+  <div class="botgrid">
+    <section class="botcol">
+      <div class="colhead"><h2>Patience Bot</h2><span class="tag g" style="margin:0">Patience Bot</span></div>
+      <div id="stats-patience"></div>
+      <div class="sec-title">Live now</div>
+      <div id="live-patience"></div>
+      <div class="sec-title">Recent results</div>
+      <div class="feed" id="feed-patience"><div class="empty">Loading...</div></div>
+    </section>
+    <section class="botcol">
+      <div class="colhead"><h2>3 min Bot</h2><span class="tag b" style="margin:0">3 min Bot</span></div>
+      <div id="stats-3min"></div>
+      <div class="sec-title">Live now</div>
+      <div id="live-3min"></div>
+      <div class="sec-title">Recent results</div>
+      <div class="feed" id="feed-3min"><div class="empty">Loading...</div></div>
+    </section>
   </div>
-  <div class="feed" id="feed"><div class="empty">Loading...</div></div>
   <p class="fine">Times are shown in WAT. Place the trade at the entry time. {esc(RISK_TEXT)}</p>
 </div></main>
 <script>{DASH_JS}</script>

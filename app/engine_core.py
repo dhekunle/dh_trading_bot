@@ -44,6 +44,8 @@ SKIP_BAN_MINUTES = 20
 # Price data older than this is treated as a closed market
 MAX_DATA_AGE_SECONDS = 600
 GROQ_RETRY_MINUTES = 10
+MAX_GROQ_CANDIDATES = 6       # only the best setups are sent to Groq
+REPEAT_HOLD_SECONDS = 120     # same setups that were just rejected are not sent again
 
 # ---------------------------------------------------------------- news filter
 _news_cache = {"at": 0.0, "events": []}
@@ -126,6 +128,7 @@ class BaseEngine:
                 print(f"[{self.name}] Groq setup failed: {e}")
         self.groq_blocked_until = None
         self.groq_notified_at = None
+        self._last_hold = None        # (set of (pair, direction), time)
 
         self.notifier = None          # callable(text) -> private Telegram message
         self.group_notifier = None    # callable(text) -> Telegram group message
@@ -581,17 +584,28 @@ Respond ONLY in this exact format:
             print(f"[{self.name}] Groq limit active - waiting")
             return none
 
+        # Keep the strongest few, so the Groq prompt stays small
+        best = sorted(rates.items(), key=lambda kv: (kv[1]["conditions"], kv[1]["adx"]), reverse=True)
+        rates = dict(best[:MAX_GROQ_CANDIDATES])
+        signature = frozenset((pair, d["signal"]) for pair, d in rates.items())
+        now_ts = time.time()
+        if self._last_hold and self._last_hold[0] == signature and now_ts - self._last_hold[1] < REPEAT_HOLD_SECONDS:
+            print(f"[{self.name}] Same setups were just rejected - skipping Groq")
+            return none
+
         print(f"[{self.name}] Asking Groq about {len(rates)} setup(s)...")
         response = self.ask_groq(rates, sessions, quality)
         print(f"[{self.name}] Groq: {response}")
         if not response:
             return none
         if "HOLD" in response.upper():
+            self._last_hold = (signature, now_ts)
             return none
 
         asset_text, action_text, expiry, confidence = self.extract_action(response)
         confidence_text = (confidence or response).upper()
         if "HIGH" not in confidence_text:
+            self._last_hold = (signature, now_ts)
             return none
         if not asset_text or not action_text:
             return none
