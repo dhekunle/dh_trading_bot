@@ -1,26 +1,59 @@
 import os
 import html as htmllib
 import threading
+import secrets
 from fastapi import FastAPI, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from starlette.middleware.sessions import SessionMiddleware
 import datetime
 import pytz
 import asyncio
-from .database import init_db, get_db, SessionLocal, Trade, Stats
+from .database import init_db, get_db, SessionLocal, Trade, Stats, User
 from .signal_engine import SignalEngine
 from .signal_engine_3min import SignalEngine3Min
 from .engine_core import news_status, SKIP_BAN_MINUTES
-from . import yf_data
+from . import yf_data, auth, ui
 import requests
 from .config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_3MIN,
     TELEGRAM_CHAT_ID, TELEGRAM_CHAT_ID_3MIN,
-    MY_PERSONAL_CHAT_ID, MY_PERSONAL_CHAT_ID_3MIN
+    MY_PERSONAL_CHAT_ID, MY_PERSONAL_CHAT_ID_3MIN,
+    ADMIN_USERNAME, ADMIN_PASSWORD, SECRET_KEY, REQUIRE_APPROVAL
 )
 
-app = FastAPI(title="Patience Bot & 3 min Bot")
+app = FastAPI(title="DH Binary Trader")
+
+# ---- access control -------------------------------------------------------
+ADMIN_PREFIXES = ("/admin", "/scan/", "/post/", "/result/", "/skip/", "/pause/", "/toggle-auto/", "/status")
+USER_PREFIXES = ("/app", "/api/")
+
+@app.middleware("http")
+async def access_guard(request: Request, call_next):
+    path = request.url.path
+    if path.startswith(ADMIN_PREFIXES) and not path.startswith("/admin/login"):
+        if not request.session.get("admin"):
+            return RedirectResponse("/admin/login", status_code=303)
+    elif path.startswith(USER_PREFIXES):
+        if not (request.session.get("uid") or request.session.get("admin")):
+            if path.startswith("/api/"):
+                return JSONResponse({"error": "login required"}, status_code=401)
+            return RedirectResponse("/login", status_code=303)
+    return await call_next(request)
+
+# Added after the guard so sessions are available to it
+_default_secrets = {"", "change-me-in-production", "change_this_to_a_random_secret", "your_secret_key_here"}
+if SECRET_KEY in _default_secrets:
+    print("[WARN] SECRET_KEY is not set. Using a temporary key, so everyone is logged out on every restart.")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SECRET_KEY if SECRET_KEY not in _default_secrets else secrets.token_hex(32),
+    session_cookie="dh_session",
+    max_age=60 * 60 * 24 * 30,
+    same_site="lax",
+    https_only=bool(os.getenv("RENDER")),
+)
 
 os.makedirs("static", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -45,6 +78,9 @@ scan_locks = {"patience": threading.Lock(), "3min": threading.Lock()}
 news_warned = {"patience": False, "3min": False}
 PENDING_EXPIRE_MINUTES = 10
 
+def admin_path(market: str) -> str:
+    return "/admin/3min" if market == "3min" else "/admin/patience"
+
 def get_token_and_chat(market_type: str):
     if market_type == "3min":
         return TELEGRAM_BOT_TOKEN_3MIN or TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID_3MIN or TELEGRAM_CHAT_ID, MY_PERSONAL_CHAT_ID_3MIN or MY_PERSONAL_CHAT_ID
@@ -60,13 +96,13 @@ def send_telegram(text: str, token: str, chat_id: str):
     except Exception as e:
         print(f"Telegram send error: {e}")
 
-def build_signal_message(trade: Trade) -> str:
+def build_signal_message(trade: Trade, now=None) -> str:
     """Group message in the same format as the original bots."""
     engine = ENGINES.get(trade.market_type, patience_engine)
     sessions, quality, _ = engine.get_session_quality()
     session_text = ", ".join(sessions) if sessions else "No active session"
     vol_tag = "\nSTRICT MODE - High Volatility" if getattr(engine, "high_volatility_mode", False) else ""
-    now = datetime.datetime.now(WAT)
+    now = now or datetime.datetime.now(WAT)
     entry = now + datetime.timedelta(minutes=1)
     expire = entry + datetime.timedelta(minutes=trade.expiry_mins)
     mart_entry = expire + datetime.timedelta(minutes=1)
@@ -119,28 +155,6 @@ th, td { text-align: left; padding: 8px; border-bottom: 1px solid #2d313c; }
 async def health():
     return {"status": "ok"}
 
-@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
-async def home():
-    html = f'''<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Signal Bots</title>{STYLE}</head>
-<body><div class="container">
-    <h1 style="text-align:center; margin-top:40px;">Forex Signal Bots</h1>
-    <p class="status" style="text-align:center;">Choose your bot</p>
-    <div class="home-options">
-        <div class="home-card">
-            <h2>Patience Bot</h2>
-            <p>High-quality real-market signals with session filters. Selective and patient.</p>
-            <a href="/patience" class="btn">Enter Patience Bot</a>
-        </div>
-        <div class="home-card">
-            <h2>3 min Bot</h2>
-            <p>Full volatility logic, 2 martingale levels, expiry 2–5 min. Next signal 3 minutes after previous result.</p>
-            <a href="/3min" class="btn btn-3min">Enter 3 min Bot</a>
-        </div>
-    </div>
-</div></body></html>'''
-    return HTMLResponse(html)
-
 def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quality_info=None, engine=None):
     trades = db.query(Trade).filter(Trade.market_type == market).order_by(Trade.id.desc()).limit(15).all()
     stats = db.query(Stats).order_by(Stats.id.desc()).first()
@@ -177,7 +191,7 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
     auto_status = "ON" if auto_on else "OFF"
     now = datetime.datetime.now(WAT).strftime("%Y-%m-%d %H:%M WAT")
     title = "Patience Bot" if market == "patience" else "3 min Bot"
-    back = '<a href="/" class="status">← Home</a>'
+    back = '<a href="/admin" class="status">← Admin</a>'
     
     q_info = ""
     if quality_info:
@@ -229,13 +243,13 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
 </div></body></html>'''
     return html
 
-@app.get("/patience", response_class=HTMLResponse)
+@app.get("/admin/patience", response_class=HTMLResponse)
 async def patience_dashboard(db: Session = Depends(get_db)):
     sessions, quality, reason = patience_engine.get_session_quality()
     html = build_dashboard("patience", db, bot_paused_patience, auto_scan_patience, (sessions, quality, reason), patience_engine)
     return HTMLResponse(html)
 
-@app.get("/3min", response_class=HTMLResponse)
+@app.get("/admin/3min", response_class=HTMLResponse)
 async def three_min_dashboard(db: Session = Depends(get_db)):
     sessions, quality, reason = three_min_engine.get_session_quality()
     html = build_dashboard("3min", db, bot_paused_3min, auto_scan_3min, (sessions, quality, reason), three_min_engine)
@@ -247,33 +261,43 @@ async def start_scan(market: str):
     ENGINES[m].set_info("Scanning now...")
     # Run in a worker thread so the website stays responsive while prices download
     asyncio.get_running_loop().run_in_executor(None, scan_market, m)
-    return RedirectResponse(f"/{m}", status_code=303)
+    return RedirectResponse(admin_path(m), status_code=303)
 
 @app.post("/skip/{trade_id}")
 async def skip_signal(trade_id: int, db: Session = Depends(get_db)):
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     if not trade or trade.status != "pending":
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/admin", status_code=303)
     trade.status = "skipped"
     db.commit()
     engine = ENGINES.get(trade.market_type, patience_engine)
     engine.skip_pair(trade.asset)
     engine.set_info(f"{trade.asset} skipped and banned for {SKIP_BAN_MINUTES} min. Scanning again.")
-    return RedirectResponse("/3min" if trade.market_type == "3min" else "/patience", status_code=303)
+    return RedirectResponse(admin_path(trade.market_type), status_code=303)
 
 @app.post("/post/{trade_id}")
 async def post_signal(trade_id: int, db: Session = Depends(get_db)):
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     if not trade or trade.status != "pending":
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/admin", status_code=303)
+    now = datetime.datetime.now(WAT)
+    entry = now + datetime.timedelta(minutes=1)
+    expire = entry + datetime.timedelta(minutes=trade.expiry_mins)
+    mart_entry = expire + datetime.timedelta(minutes=1)
+    mart_expire = mart_entry + datetime.timedelta(minutes=trade.expiry_mins)
+    details = dict(trade.details or {})
+    details.update({k: v.astimezone(datetime.timezone.utc).isoformat() for k, v in {
+        "activated_at": now, "entry_at": entry, "expire_at": expire,
+        "mart_entry_at": mart_entry, "mart_expire_at": mart_expire}.items()})
+    trade.details = details
     trade.status = "active"
     db.commit()
     # Post to the correct Telegram group using the correct token
     token, chat_id, personal_id = get_token_and_chat(trade.market_type)
-    send_telegram(build_signal_message(trade), token, chat_id)
+    send_telegram(build_signal_message(trade, now), token, chat_id)
     if personal_id:
         send_telegram(f"Activated: {trade.asset} {trade.action}", token, personal_id)
-    redir = "/3min" if trade.market_type == "3min" else "/patience"
+    redir = admin_path(trade.market_type)
     return RedirectResponse(redir, status_code=303)
 
 @app.post("/result/{trade_id}")
@@ -281,7 +305,7 @@ async def log_result(trade_id: int, result: str = Form(...), db: Session = Depen
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     result = (result or "").upper()
     if not trade or trade.result or result not in ("WIN", "LOSS", "DRAW"):
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/admin", status_code=303)
     trade.result = result
     trade.status = result.lower()
     trade.resolved_at = datetime.datetime.utcnow()
@@ -325,7 +349,7 @@ async def log_result(trade_id: int, result: str = Form(...), db: Session = Depen
         else:
             three_min_martingale_level = 0
 
-    redir = "/3min" if trade.market_type == "3min" else "/patience"
+    redir = admin_path(trade.market_type)
     return RedirectResponse(redir, status_code=303)
 
 @app.post("/pause/{market}")
@@ -333,20 +357,237 @@ async def toggle_pause(market: str):
     global bot_paused_patience, bot_paused_3min
     if market == "patience":
         bot_paused_patience = not bot_paused_patience
-        return RedirectResponse("/patience", status_code=303)
+        return RedirectResponse("/admin/patience", status_code=303)
     else:
         bot_paused_3min = not bot_paused_3min
-        return RedirectResponse("/3min", status_code=303)
+        return RedirectResponse("/admin/3min", status_code=303)
 
 @app.post("/toggle-auto/{market}")
 async def toggle_auto(market: str):
     global auto_scan_patience, auto_scan_3min
     if market == "patience":
         auto_scan_patience = not auto_scan_patience
-        return RedirectResponse("/patience", status_code=303)
+        return RedirectResponse("/admin/patience", status_code=303)
     else:
         auto_scan_3min = not auto_scan_3min
-        return RedirectResponse("/3min", status_code=303)
+        return RedirectResponse("/admin/3min", status_code=303)
+
+# ---- public site, accounts and user dashboard ------------------------------
+login_throttle = auth.Throttle(limit=8, window=900)
+signup_throttle = auth.Throttle(limit=30, window=3600)
+_stats_cache = {"at": None, "data": None}
+RESOLVED = ["win", "loss", "draw"]
+
+def site_stats(db):
+    """Real numbers for the home page, cached for 5 minutes."""
+    now = datetime.datetime.utcnow()
+    if _stats_cache["at"] and (now - _stats_cache["at"]).total_seconds() < 300:
+        return _stats_cache["data"]
+    wins = db.query(Trade).filter(Trade.status == "win").count()
+    losses = db.query(Trade).filter(Trade.status == "loss").count()
+    draws = db.query(Trade).filter(Trade.status == "draw").count()
+    live = db.query(Trade).filter(Trade.status == "active").count()
+    data = {"wins": wins, "losses": losses, "decided": wins + losses + draws,
+            "signals": wins + losses + draws + live}
+    _stats_cache.update(at=now, data=data)
+    return data
+
+def current_user(request: Request, db: Session):
+    uid = request.session.get("uid")
+    if not uid:
+        return None
+    user = db.query(User).filter(User.id == uid).first()
+    if not user:
+        request.session.clear()
+    return user
+
+def _as_utc(dt):
+    if dt is None:
+        return datetime.datetime.now(datetime.timezone.utc)
+    return dt.replace(tzinfo=datetime.timezone.utc) if dt.tzinfo is None else dt
+
+def public_signal(t: Trade) -> dict:
+    """Only what members should see: no scoring details, no AI notes."""
+    d = t.details or {}
+    posted = d.get("activated_at") or _as_utc(t.created_at).isoformat()
+    if d.get("entry_at") and d.get("expire_at"):
+        entry, expire = d["entry_at"], d["expire_at"]
+        mart_entry, mart_expire = d.get("mart_entry_at"), d.get("mart_expire_at")
+    else:  # signals saved before member accounts existed
+        base = datetime.datetime.fromisoformat(posted)
+        e = base + datetime.timedelta(minutes=1)
+        x = e + datetime.timedelta(minutes=t.expiry_mins)
+        me = x + datetime.timedelta(minutes=1)
+        entry, expire, mart_entry = e.isoformat(), x.isoformat(), me.isoformat()
+        mart_expire = (me + datetime.timedelta(minutes=t.expiry_mins)).isoformat()
+    return {
+        "id": t.id, "market": t.market_type, "trade_number": t.trade_number, "asset": t.asset,
+        "action": t.action, "expiry_mins": t.expiry_mins, "status": t.status,
+        "martingale_level": t.martingale_level or 0, "posted_at": posted,
+        "entry_at": entry, "expire_at": expire, "mart_entry_at": mart_entry, "mart_expire_at": mart_expire,
+    }
+
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def home(request: Request, db: Session = Depends(get_db)):
+    signed_in = bool(request.session.get("uid") or request.session.get("admin"))
+    return HTMLResponse(ui.landing_page(signed_in, site_stats(db)))
+
+@app.get("/signup", response_class=HTMLResponse)
+async def signup_page(request: Request):
+    if request.session.get("uid"):
+        return RedirectResponse("/app", status_code=303)
+    return HTMLResponse(ui.auth_page("signup"))
+
+@app.post("/signup", response_class=HTMLResponse)
+async def signup_submit(request: Request, email: str = Form(""), password: str = Form(""),
+                        confirm: str = Form(""), db: Session = Depends(get_db)):
+    email = auth.clean_email(email)
+    def fail(message):
+        return HTMLResponse(ui.auth_page("signup", error=message, email=email))
+    if signup_throttle.blocked("all"):
+        return fail("Too many sign ups right now. Please try again later.")
+    signup_throttle.fail("all")
+    if not auth.valid_email(email):
+        return fail("Please enter a valid email address.")
+    problem = auth.password_problem(password)
+    if problem:
+        return fail(problem)
+    if password != confirm:
+        return fail("The two passwords do not match.")
+    if db.query(User).filter(User.email == email).first():
+        return fail("An account with this email already exists. Try logging in.")
+    user = User(email=email, password_hash=auth.hash_password(password), is_active=not REQUIRE_APPROVAL)
+    try:
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        print(f"[SIGNUP] {e}")
+        return fail("Could not create the account. Please try again.")
+    if not user.is_active:
+        return HTMLResponse(ui.auth_page("login", notice="Account created. The admin needs to switch it on before you can see signals.", email=email))
+    request.session.clear()
+    request.session["uid"] = user.id
+    return RedirectResponse("/app", status_code=303)
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    if request.session.get("uid"):
+        return RedirectResponse("/app", status_code=303)
+    return HTMLResponse(ui.auth_page("login"))
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request, email: str = Form(""), password: str = Form(""),
+                       db: Session = Depends(get_db)):
+    email = auth.clean_email(email)
+    key = f"user:{email}"
+    def fail(message):
+        return HTMLResponse(ui.auth_page("login", error=message, email=email))
+    if login_throttle.blocked(key):
+        return fail("Too many attempts. Please wait a few minutes and try again.")
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not auth.verify_password(password, user.password_hash):
+        login_throttle.fail(key)
+        return fail("Incorrect email or password.")
+    login_throttle.clear(key)
+    if user.is_active is False:
+        return HTMLResponse(ui.pending_page(user.email))
+    request.session.clear()
+    request.session["uid"] = user.id
+    return RedirectResponse("/app", status_code=303)
+
+@app.post("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/", status_code=303)
+
+@app.get("/app", response_class=HTMLResponse)
+async def user_app(request: Request, db: Session = Depends(get_db)):
+    if request.session.get("admin"):
+        return HTMLResponse(ui.user_dashboard("Admin"))
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if user.is_active is False:
+        return HTMLResponse(ui.pending_page(user.email))
+    return HTMLResponse(ui.user_dashboard(user.email))
+
+@app.get("/api/signals")
+async def api_signals(request: Request, db: Session = Depends(get_db)):
+    if not request.session.get("admin"):
+        user = current_user(request, db)
+        if not user:
+            return JSONResponse({"error": "login required"}, status_code=401)
+        if user.is_active is False:
+            return JSONResponse({"error": "account not active"}, status_code=403)
+    live_states = ["active"] + RESOLVED
+    rows = db.query(Trade).filter(Trade.status.in_(live_states)).order_by(Trade.id.desc()).limit(40).all()
+    week_ago = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    recent = db.query(Trade).filter(Trade.status.in_(RESOLVED), Trade.created_at >= week_ago).all()
+    stats = {m: {"wins": 0, "losses": 0, "draws": 0} for m in ("patience", "3min")}
+    for t in recent:
+        bucket = stats.get(t.market_type)
+        if bucket is not None:
+            bucket[{"win": "wins", "loss": "losses", "draw": "draws"}[t.status]] += 1
+    return JSONResponse({
+        "server_now": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "signals": [public_signal(t) for t in rows],
+        "stats": stats,
+    })
+
+# ---- admin ---------------------------------------------------------------
+admin_throttle = auth.Throttle(limit=6, window=900)
+
+@app.get("/admin/login", response_class=HTMLResponse)
+async def admin_login_page(request: Request):
+    if request.session.get("admin"):
+        return RedirectResponse("/admin", status_code=303)
+    return HTMLResponse(ui.admin_login_page(not_configured=not auth.admin_configured(ADMIN_PASSWORD)))
+
+@app.post("/admin/login", response_class=HTMLResponse)
+async def admin_login_submit(request: Request, username: str = Form(""), password: str = Form("")):
+    if not auth.admin_configured(ADMIN_PASSWORD):
+        return HTMLResponse(ui.admin_login_page(not_configured=True))
+    if admin_throttle.blocked("admin"):
+        return HTMLResponse(ui.admin_login_page(error="Too many attempts. Wait a few minutes and try again."))
+    if not auth.admin_credentials_ok(username, password, ADMIN_USERNAME, ADMIN_PASSWORD):
+        admin_throttle.fail("admin")
+        return HTMLResponse(ui.admin_login_page(error="Incorrect username or password."))
+    admin_throttle.clear("admin")
+    request.session.clear()
+    request.session["admin"] = True
+    return RedirectResponse("/admin", status_code=303)
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_home(db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    waiting = len([u for u in users if u.is_active is False])
+    info = {m: e.last_scan_info for m, e in ENGINES.items()}
+    return HTMLResponse(ui.admin_hub(len(users), waiting, REQUIRE_APPROVAL, info))
+
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users(db: Session = Depends(get_db)):
+    rows = db.query(User).order_by(User.id.desc()).all()
+    users = [{"id": u.id, "email": u.email, "is_active": u.is_active is not False,
+              "joined": u.created_at.strftime("%d %b %Y") if u.created_at else "-"} for u in rows]
+    return HTMLResponse(ui.admin_users_page(users, REQUIRE_APPROVAL))
+
+@app.post("/admin/users/{user_id}/toggle")
+async def admin_toggle_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if user:
+        user.is_active = not (user.is_active is not False)
+        db.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+# Old bookmarks
+@app.get("/patience")
+async def old_patience():
+    return RedirectResponse("/admin/patience", status_code=303)
+
+@app.get("/3min")
+async def old_three_min():
+    return RedirectResponse("/admin/3min", status_code=303)
 
 def scan_market(market: str):
     """Scan one bot once. Blocking, so it always runs in a worker thread."""

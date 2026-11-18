@@ -10,4 +10,5 @@ sqlalchemy
 jinja2
 python-multipart
 yfinance
-
+itsdangerous
+psycopg2-binary

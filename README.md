@@ -38,3 +38,12 @@ Modular trading signal bot converted from Telegram-only to a full web dashboard 
 - A signal is only posted to Telegram after you tap ACTIVATE. Unactivated signals expire after 10 minutes.
 - Only one open signal per bot at a time. Log its result to unlock the next scan.
 - The scanner runs in the background once started from the dashboard.
+
+
+## DH Binary Trader: site layout
+- `/` public home page, `/signup` and `/login` for members
+- `/app` member dashboard: signals drop in live with entry countdown and alerts
+- `/admin` owner area (needs ADMIN_USERNAME and ADMIN_PASSWORD): bot controls at `/admin/patience` and `/admin/3min`, members at `/admin/users`
+- `/health` for UptimeRobot
+- Members only see a signal after you tap ACTIVATE. Telegram posting still works as before.
+- Set DATABASE_URL to a hosted Postgres database. SQLite files are wiped when Render redeploys or restarts.

@@ -4,7 +4,8 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from .config import DATABASE_URL
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, connect_args=_connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -33,6 +34,7 @@ class User(Base):
     password_hash = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_admin = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
 
 class Stats(Base):
     __tablename__ = "stats"
@@ -53,6 +55,11 @@ def init_db():
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():
         User.__table__.create(bind=engine)
+    # Older databases were created before accounts could be disabled
+    elif "is_active" not in [c["name"] for c in inspector.get_columns("users")]:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT TRUE"))
 
 def get_db():
     db = SessionLocal()

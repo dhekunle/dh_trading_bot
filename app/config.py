@@ -18,4 +18,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
-DATABASE_URL = "sqlite:///./data/bot.db"
+# Use a hosted Postgres database (set DATABASE_URL) so accounts survive redeploys.
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/bot.db")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
+
+# When on, new accounts must be enabled by the admin before they can see signals
+REQUIRE_APPROVAL = os.getenv("REQUIRE_APPROVAL", "0").strip().lower() in ("1", "true", "yes")
