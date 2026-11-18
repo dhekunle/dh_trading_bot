@@ -20,8 +20,11 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 # Use a hosted Postgres database (set DATABASE_URL) so accounts survive redeploys.
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/bot.db")
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
+# Accept any Postgres style prefix (Supabase shows several) and always use the psycopg 3 driver
+for _prefix in ("postgres://", "postgresql://", "postgresql+psycopg2://"):
+    if DATABASE_URL.startswith(_prefix):
+        DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len(_prefix):]
+        break
 
 # When on, new accounts must be enabled by the admin before they can see signals
 REQUIRE_APPROVAL = os.getenv("REQUIRE_APPROVAL", "0").strip().lower() in ("1", "true", "yes")
