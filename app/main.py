@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 import html as htmllib
 import threading
 import secrets
@@ -108,16 +107,20 @@ TELEGRAM_HINTS = (
 
 def send_telegram(text: str, token: str, chat_id: str, market: str = None) -> bool:
     """Send a message. Pass market only for group posts so the dashboard can show the outcome."""
+    return send_telegram_ex(text, token, chat_id, market)[0]
+
+def send_telegram_ex(text: str, token: str, chat_id: str, market: str = None):
+    """Same as send_telegram but returns (ok, message_id) so a post can be deleted later."""
     def note(message):
         if market:
             telegram_status[market] = message
     stamp = datetime.datetime.now(WAT).strftime("%I:%M %p")
     if not token:
         note("Telegram FAILED: bot token is missing")
-        return False
+        return False, None
     if not chat_id:
         note("Telegram FAILED: group chat ID is missing" + (" (TELEGRAM_CHAT_ID_3MIN)" if market == "3min" else ""))
-        return False
+        return False, None
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         r = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
@@ -127,53 +130,51 @@ def send_telegram(text: str, token: str, chat_id: str, market: str = None) -> bo
             data = {}
         if r.status_code == 200 and data.get("ok"):
             note(f"Telegram OK (last post {stamp})")
-            return True
+            return True, (data.get("result") or {}).get("message_id")
         reason = str(data.get("description") or f"HTTP {r.status_code}")
         hint = next((h for key, h in TELEGRAM_HINTS if key in reason.lower()), "")
         note(f"Telegram FAILED: {reason}" + (f" - {hint}" if hint else ""))
         print(f"[TELEGRAM] {market or 'private'} failed: {reason}")
-        return False
+        return False, None
     except Exception as e:
         reason = str(e).replace(token, "***")[:150]
         note(f"Telegram FAILED: {reason}")
         print(f"[TELEGRAM] {market or 'private'} error: {reason}")
-        return False
+        return False, None
 
-STICKER_DIR = Path(__file__).resolve().parent / "assets" / "stickers"
+SESSION_START_TEXT = (
+    "🟢 SESSION STARTED ✅\n\n"
+    "🚀 The bot is live again. Signals will drop here, get ready!"
+)
+SESSION_CLOSE_TEXT = (
+    "🔴 SESSION CLOSED 🔒\n\n"
+    "⏸ No more signals for now. Take a break and see you next session!"
+)
 
-def send_telegram_photo(filename: str, token: str, chat_id: str, market: str = None) -> bool:
-    """Send one of the bundled session pictures to a Telegram group."""
-    def note(message):
-        if market:
-            telegram_status[market] = message
-    path = STICKER_DIR / filename
-    if not token or not chat_id:
-        note("Telegram FAILED: bot token or group chat ID is missing")
-        return False
-    if not path.exists():
-        note(f"Telegram FAILED: picture {filename} is missing from the app")
+def delete_telegram_message(token: str, chat_id: str, message_id) -> bool:
+    """Remove a message the bot posted in the group."""
+    if not (token and chat_id and message_id):
         return False
     try:
-        with open(path, "rb") as f:
-            r = requests.post(
-                f"https://api.telegram.org/bot{token}/sendPhoto",
-                data={"chat_id": chat_id}, files={"photo": (filename, f, "image/jpeg")}, timeout=20,
-            )
-        try:
-            data = r.json()
-        except Exception:
-            data = {}
-        if r.status_code == 200 and data.get("ok"):
-            note(f"Telegram OK (last post {datetime.datetime.now(WAT).strftime('%I:%M %p')})")
-            return True
-        reason = str(data.get("description") or f"HTTP {r.status_code}")
-        hint = next((h for key, h in TELEGRAM_HINTS if key in reason.lower()), "")
-        note(f"Telegram FAILED: {reason}" + (f" - {hint}" if hint else ""))
-        return False
+        r = requests.post(f"https://api.telegram.org/bot{token}/deleteMessage",
+                          json={"chat_id": chat_id, "message_id": message_id}, timeout=10)
+        ok = r.status_code == 200 and bool(r.json().get("ok"))
+        if not ok:
+            print(f"[TELEGRAM] delete failed: {r.text[:150]}".replace(token, "***"))
+        return ok
     except Exception as e:
-        reason = str(e).replace(token, "***")[:150]
-        note(f"Telegram FAILED: {reason}")
+        print(f"[TELEGRAM] delete error: {str(e).replace(token, '***')[:150]}")
         return False
+
+def market_numbers(db, market: str):
+    """Results and trade numbering kept separately for each bot."""
+    rows = db.query(Trade.status, Trade.trade_number).filter(
+        Trade.market_type == market, Trade.status.in_(RESOLVED)).all()
+    wins = sum(1 for r in rows if r[0] == "win")
+    losses = sum(1 for r in rows if r[0] == "loss")
+    draws = sum(1 for r in rows if r[0] == "draw")
+    last = max([int(r[1] or 0) for r in rows], default=0)
+    return wins, losses, draws, last + 1
 
 def build_signal_message(trade: Trade, now=None) -> str:
     """Group message in the same format as the original bots."""
@@ -218,14 +219,10 @@ async def health():
 
 def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quality_info=None, engine=None):
     trades = db.query(Trade).filter(Trade.market_type == market).order_by(Trade.id.desc()).limit(20).all()
-    stats = db.query(Stats).order_by(Stats.id.desc()).first()
-    wins = int((stats.wins or 0) if stats else 0)
-    losses = int((stats.losses or 0) if stats else 0)
-    draws = int((stats.draws or 0) if stats else 0)
+    wins, losses, draws, next_trade = market_numbers(db, market)
     total = wins + losses + draws
     decided = wins + losses
     win_rate = round(wins * 100 / decided) if decided else 0
-    next_trade = int((stats.trade_number or 1) if stats else 1)
     title = "Patience Bot" if market == "patience" else "3 min Bot"
     now = datetime.datetime.now(WAT).strftime("%a, %d %b %Y · %H:%M WAT")
     sessions, quality, reason = quality_info or ([], "UNKNOWN", "Session status unavailable")
@@ -273,7 +270,7 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
 <form action="/pause/{market}" method="post"><button class="btn {pause_class}" type="submit">Ⅱ &nbsp; {pause_label}</button></form>
 <form action="/toggle-auto/{market}" method="post"><button class="btn" type="submit">Auto-scan: <span class="{'green' if auto_on else 'amber'}">{auto_status}</span></button></form>
 </div><div class="botstate"><span class="dot" style="background:{'var(--amber)' if paused else 'var(--green)'}"></span>{'Bot is paused. Automatic scanning is suspended.' if paused else 'Bot is running. Qualified signals publish automatically to Telegram.'}</div></article>
-<article class="panel"><div class="panelhead"><h2>Performance summary</h2><span class="chip">All recorded results</span></div><div class="statsgrid">
+<article class="panel"><div class="panelhead"><h2>Performance summary</h2><span class="chip">{title} only</span></div><div class="statsgrid">
 <div class="stat"><div class="label">WINS</div><div class="num green">{wins}</div></div><div class="stat"><div class="label">LOSSES</div><div class="num red">{losses}</div></div><div class="stat"><div class="label">DRAWS</div><div class="num">{draws}</div></div><div class="stat"><div class="label">WIN RATE</div><div class="num purple">{win_rate}%</div><div class="ratebar"><span style="width:{win_rate}%"></span></div></div>
 </div><div class="footerline"><span>{total} results recorded</span><span>Next trade #{next_trade}</span></div></article></section>
 <section class="panel"><div class="panelhead"><h2>Recent signals</h2><span class="chip">Latest {len(trades)} records</span></div><div class="tablewrap"><table class="signals"><thead><tr><th>Trade</th><th>Asset</th><th>Direction</th><th>Expiry</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows_html}</tbody></table></div><div class="footerline"><span>Signals are published automatically after passing all bot filters.</span><span>Skip is available here after publication.</span></div></section>
@@ -307,12 +304,26 @@ async def skip_signal(trade_id: int, db: Session = Depends(get_db)):
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     if not trade or trade.status not in ("pending", "active") or trade.result:
         return RedirectResponse("/admin", status_code=303)
+    was_posted = trade.status == "active"
+    details = dict(trade.details or {})
+    message_id = details.get("telegram_message_id")
+    market, number, asset = trade.market_type, trade.trade_number, trade.asset
     trade.status = "skipped"
     db.commit()
-    engine = ENGINES.get(trade.market_type, patience_engine)
-    engine.skip_pair(trade.asset)
-    engine.set_info(f"{trade.asset} skipped and banned for {SKIP_BAN_MINUTES} min. Scanning again.")
-    return RedirectResponse(admin_path(trade.market_type), status_code=303)
+    engine = ENGINES.get(market, patience_engine)
+    engine.skip_pair(asset)
+    engine.set_info(f"{asset} skipped and banned for {SKIP_BAN_MINUTES} min. Scanning again.")
+    if was_posted:
+        token, chat_id, personal_id = get_token_and_chat(market)
+        def tell_group():
+            # Take the signal off the group, then tell everyone to skip it
+            delete_telegram_message(token, chat_id, message_id)
+            send_telegram(f"⏭ SKIP ❌\n\nTrade #{number} ({asset}) is cancelled. Do not take this trade.",
+                          token, chat_id, market=market)
+            if personal_id:
+                send_telegram(f"Skipped: Trade #{number} {asset}", token, personal_id)
+        await asyncio.get_running_loop().run_in_executor(None, tell_group)
+    return RedirectResponse(admin_path(market), status_code=303)
 
 @app.post("/post/{trade_id}")
 async def post_signal(trade_id: int, db: Session = Depends(get_db)):
@@ -333,7 +344,12 @@ async def post_signal(trade_id: int, db: Session = Depends(get_db)):
     db.commit()
     # Post to the correct Telegram group using the correct token
     token, chat_id, personal_id = get_token_and_chat(trade.market_type)
-    send_telegram(build_signal_message(trade, now), token, chat_id, market=trade.market_type)
+    ok, message_id = send_telegram_ex(build_signal_message(trade, now), token, chat_id, market=trade.market_type)
+    if ok and message_id:
+        details = dict(trade.details or {})
+        details["telegram_message_id"] = message_id
+        trade.details = details
+        db.commit()
     if personal_id:
         send_telegram(f"Activated: {trade.asset} {trade.action}", token, personal_id)
     redir = admin_path(trade.market_type)
@@ -348,21 +364,6 @@ async def log_result(trade_id: int, result: str = Form(...), db: Session = Depen
     trade.result = result
     trade.status = result.lower()
     trade.resolved_at = datetime.datetime.utcnow()
-    db.commit()
-
-    stats = db.query(Stats).order_by(Stats.id.desc()).first()
-    if not stats:
-        stats = Stats(week=datetime.datetime.now(WAT).strftime("%Y-W%W"), wins=0, losses=0, draws=0,
-                      martingale_wins=0, martingale_losses=0, total=0, trade_number=1)
-        db.add(stats)
-    if result == "WIN":
-        stats.wins = (stats.wins or 0) + 1
-    elif result == "LOSS":
-        stats.losses = (stats.losses or 0) + 1
-    elif result == "DRAW":
-        stats.draws = (stats.draws or 0) + 1
-    stats.total = (stats.total or 0) + 1
-    stats.trade_number = trade.trade_number + 1
     db.commit()
 
     # Post result to the correct Telegram group
@@ -403,9 +404,9 @@ async def toggle_pause(market: str):
         bot_paused_3min = not bot_paused_3min
         paused = bot_paused_3min
     token, chat_id, _ = get_token_and_chat(m)
-    picture = "session_close.jpg" if paused else "session_start.jpg"
+    text = SESSION_CLOSE_TEXT if paused else SESSION_START_TEXT
     await asyncio.get_running_loop().run_in_executor(
-        None, lambda: send_telegram_photo(picture, token, chat_id, market=m))
+        None, lambda: send_telegram(text, token, chat_id, market=m))
     ENGINES[m].set_info("Session closed (bot paused)" if paused else "Session started (bot resumed)")
     return RedirectResponse(admin_path(m), status_code=303)
 
@@ -881,8 +882,7 @@ def scan_market(market: str):
             data = dict(rates[asset])
             data["expiry_mins"] = expiry
             data["groq"] = (analysis or "")[:500]
-            last = db.query(Stats).order_by(Stats.id.desc()).first()
-            tnum = last.trade_number if last and last.trade_number else 1
+            tnum = market_numbers(db, market)[3]
             level = three_min_martingale_level if market == "3min" else 0
             # Publish immediately: no admin approval or click-to-activate delay.
             now = datetime.datetime.now(WAT)
@@ -901,8 +901,9 @@ def scan_market(market: str):
             db.add(trade)
             db.commit()
             db.refresh(trade)
-            posted = send_telegram(build_signal_message(trade, now), token, chat_id, market=market)
+            posted, message_id = send_telegram_ex(build_signal_message(trade, now), token, chat_id, market=market)
             details = dict(trade.details or {})
+            details["telegram_message_id"] = message_id
             details["telegram_posted"] = bool(posted)
             details["telegram_posted_at"] = now.astimezone(datetime.timezone.utc).isoformat() if posted else None
             trade.details = details

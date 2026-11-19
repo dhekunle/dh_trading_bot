@@ -51,5 +51,7 @@ Modular trading signal bot converted from Telegram-only to a full web dashboard 
 ## Members, chat and Telegram pictures
 - Sign up asks for full name, username and email. Members log in with email or username. Older accounts are asked to add a name and username the first time they log in.
 - Community chat on the member dashboard. Members chat with each other and the admin. Links are blocked for members, messages are rate limited, and the admin can delete messages or mute a member at `/admin/chat` and `/admin/users`.
-- Pausing a bot sends the SESSION CLOSE picture to that bot's Telegram group. Resuming sends SESSION START. The pictures are in `app/assets/stickers/`.
+- Pausing a bot posts a SESSION CLOSED text message (with emoji) in that bot's Telegram group. Resuming posts SESSION STARTED.
+- Skipping a signal deletes it from the Telegram group and posts a SKIP message.
+- Each bot keeps its own results, win rate and trade numbering (Patience and 3 min both start at #1).
 - New database columns and the `chat_messages` table are created automatically on startup. On Supabase, also run: `alter table chat_messages enable row level security;`
