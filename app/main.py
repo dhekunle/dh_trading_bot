@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import html as htmllib
 import threading
 import secrets
@@ -10,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 import datetime
 import pytz
 import asyncio
-from .database import init_db, get_db, SessionLocal, Trade, Stats, User
+from .database import init_db, get_db, SessionLocal, Trade, Stats, User, ChatMessage
 from .signal_engine import SignalEngine
 from .signal_engine_3min import SignalEngine3Min
 from .engine_core import news_status, SKIP_BAN_MINUTES
@@ -136,6 +137,42 @@ def send_telegram(text: str, token: str, chat_id: str, market: str = None) -> bo
         reason = str(e).replace(token, "***")[:150]
         note(f"Telegram FAILED: {reason}")
         print(f"[TELEGRAM] {market or 'private'} error: {reason}")
+        return False
+
+STICKER_DIR = Path(__file__).resolve().parent / "assets" / "stickers"
+
+def send_telegram_photo(filename: str, token: str, chat_id: str, market: str = None) -> bool:
+    """Send one of the bundled session pictures to a Telegram group."""
+    def note(message):
+        if market:
+            telegram_status[market] = message
+    path = STICKER_DIR / filename
+    if not token or not chat_id:
+        note("Telegram FAILED: bot token or group chat ID is missing")
+        return False
+    if not path.exists():
+        note(f"Telegram FAILED: picture {filename} is missing from the app")
+        return False
+    try:
+        with open(path, "rb") as f:
+            r = requests.post(
+                f"https://api.telegram.org/bot{token}/sendPhoto",
+                data={"chat_id": chat_id}, files={"photo": (filename, f, "image/jpeg")}, timeout=20,
+            )
+        try:
+            data = r.json()
+        except Exception:
+            data = {}
+        if r.status_code == 200 and data.get("ok"):
+            note(f"Telegram OK (last post {datetime.datetime.now(WAT).strftime('%I:%M %p')})")
+            return True
+        reason = str(data.get("description") or f"HTTP {r.status_code}")
+        hint = next((h for key, h in TELEGRAM_HINTS if key in reason.lower()), "")
+        note(f"Telegram FAILED: {reason}" + (f" - {hint}" if hint else ""))
+        return False
+    except Exception as e:
+        reason = str(e).replace(token, "***")[:150]
+        note(f"Telegram FAILED: {reason}")
         return False
 
 def build_signal_message(trade: Trade, now=None) -> str:
@@ -356,13 +393,21 @@ async def log_result(trade_id: int, result: str = Form(...), db: Session = Depen
 
 @app.post("/pause/{market}")
 async def toggle_pause(market: str):
+    """Pause closes the session in the Telegram group, resume starts a new one."""
     global bot_paused_patience, bot_paused_3min
-    if market == "patience":
+    m = "patience" if market == "patience" else "3min"
+    if m == "patience":
         bot_paused_patience = not bot_paused_patience
-        return RedirectResponse("/admin/patience", status_code=303)
+        paused = bot_paused_patience
     else:
         bot_paused_3min = not bot_paused_3min
-        return RedirectResponse("/admin/3min", status_code=303)
+        paused = bot_paused_3min
+    token, chat_id, _ = get_token_and_chat(m)
+    picture = "session_close.jpg" if paused else "session_start.jpg"
+    await asyncio.get_running_loop().run_in_executor(
+        None, lambda: send_telegram_photo(picture, token, chat_id, market=m))
+    ENGINES[m].set_info("Session closed (bot paused)" if paused else "Session started (bot resumed)")
+    return RedirectResponse(admin_path(m), status_code=303)
 
 @app.post("/toggle-auto/{market}")
 async def toggle_auto(market: str):
@@ -441,14 +486,20 @@ async def signup_page(request: Request):
     return HTMLResponse(ui.auth_page("signup"))
 
 @app.post("/signup", response_class=HTMLResponse)
-async def signup_submit(request: Request, email: str = Form(""), password: str = Form(""),
+async def signup_submit(request: Request, full_name: str = Form(""), username: str = Form(""),
+                        email: str = Form(""), password: str = Form(""),
                         confirm: str = Form(""), db: Session = Depends(get_db)):
+    full_name = auth.clean_name(full_name)
+    username = auth.clean_username(username)
     email = auth.clean_email(email)
     def fail(message):
-        return HTMLResponse(ui.auth_page("signup", error=message, email=email))
+        return HTMLResponse(ui.auth_page("signup", error=message, email=email, full_name=full_name, username=username))
     if signup_throttle.blocked("all"):
         return fail("Too many sign ups right now. Please try again later.")
     signup_throttle.fail("all")
+    problem = auth.name_problem(full_name) or auth.username_problem(username)
+    if problem:
+        return fail(problem)
     if not auth.valid_email(email):
         return fail("Please enter a valid email address.")
     problem = auth.password_problem(password)
@@ -456,16 +507,20 @@ async def signup_submit(request: Request, email: str = Form(""), password: str =
         return fail(problem)
     if password != confirm:
         return fail("The two passwords do not match.")
+    if db.query(User).filter(User.username == username).first():
+        return fail("That username is taken. Please choose another.")
     if db.query(User).filter(User.email == email).first():
         return fail("An account with this email already exists. Try logging in.")
-    user = User(email=email, password_hash=auth.hash_password(password), is_active=not REQUIRE_APPROVAL)
+    user = User(email=email, full_name=full_name, username=username,
+                password_hash=auth.hash_password(password), is_active=not REQUIRE_APPROVAL)
     try:
         db.add(user)
         db.commit()
         db.refresh(user)
     except Exception as e:
         print(f"[SIGNUP] {e}")
-        return fail("Could not create the account. Please try again.")
+        db.rollback()
+        return fail("Could not create the account. The username or email may already be used.")
     if not user.is_active:
         return HTMLResponse(ui.auth_page("login", notice="Account created. The admin needs to switch it on before you can see signals.", email=email))
     request.session.clear()
@@ -481,16 +536,20 @@ async def login_page(request: Request):
 @app.post("/login", response_class=HTMLResponse)
 async def login_submit(request: Request, email: str = Form(""), password: str = Form(""),
                        db: Session = Depends(get_db)):
-    email = auth.clean_email(email)
-    key = f"user:{email}"
+    email = (email or "").strip()
+    who = auth.clean_email(email) if "@" in email else auth.clean_username(email)
+    key = f"user:{who}"
     def fail(message):
         return HTMLResponse(ui.auth_page("login", error=message, email=email))
     if login_throttle.blocked(key):
         return fail("Too many attempts. Please wait a few minutes and try again.")
-    user = db.query(User).filter(User.email == email).first()
+    if "@" in email:
+        user = db.query(User).filter(User.email == who).first()
+    else:
+        user = db.query(User).filter(User.username == who).first()
     if not user or not auth.verify_password(password, user.password_hash):
         login_throttle.fail(key)
-        return fail("Incorrect email or password.")
+        return fail("Incorrect email/username or password.")
     login_throttle.clear(key)
     if user.is_active is False:
         return HTMLResponse(ui.pending_page(user.email))
@@ -503,16 +562,53 @@ async def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/", status_code=303)
 
+@app.get("/profile", response_class=HTMLResponse)
+async def profile_page(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if user.username and user.full_name:
+        return RedirectResponse("/app", status_code=303)
+    return HTMLResponse(ui.profile_page(user.email, full_name=user.full_name or "", username=user.username or ""))
+
+@app.post("/profile", response_class=HTMLResponse)
+async def profile_submit(request: Request, full_name: str = Form(""), username: str = Form(""),
+                         db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    full_name = auth.clean_name(full_name)
+    username = auth.clean_username(username)
+    def fail(message):
+        return HTMLResponse(ui.profile_page(user.email, error=message, full_name=full_name, username=username))
+    problem = auth.name_problem(full_name) or auth.username_problem(username)
+    if problem:
+        return fail(problem)
+    taken = db.query(User).filter(User.username == username).first()
+    if taken and taken.id != user.id:
+        return fail("That username is taken. Please choose another.")
+    user.full_name = full_name
+    user.username = username
+    try:
+        db.commit()
+    except Exception as e:
+        print(f"[PROFILE] {e}")
+        db.rollback()
+        return fail("Could not save your details. Please try again.")
+    return RedirectResponse("/app", status_code=303)
+
 @app.get("/app", response_class=HTMLResponse)
 async def user_app(request: Request, db: Session = Depends(get_db)):
     if request.session.get("admin"):
-        return HTMLResponse(ui.user_dashboard("Admin"))
+        return HTMLResponse(ui.user_dashboard("Admin", chat_name="Admin"))
     user = current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
     if user.is_active is False:
         return HTMLResponse(ui.pending_page(user.email))
-    return HTMLResponse(ui.user_dashboard(user.email))
+    if not user.username or not user.full_name:
+        return RedirectResponse("/profile", status_code=303)
+    return HTMLResponse(ui.user_dashboard(user.email, chat_name=user.username))
 
 @app.get("/api/signals")
 async def api_signals(request: Request, db: Session = Depends(get_db)):
@@ -538,6 +634,86 @@ async def api_signals(request: Request, db: Session = Depends(get_db)):
         "signals": [public_signal(t) for t in rows],
         "stats": stats,
     })
+
+# ---- community chat ----------------------------------------------------------
+chat_rate = auth.Throttle(limit=20, window=60)     # at most 20 messages a minute each
+chat_last = {}                                      # last message time per author
+CHAT_MAX_CHARS = 400
+CHAT_HISTORY = 60
+
+def chat_viewer(request: Request, db: Session):
+    """Returns (user, is_admin, error_response). Members need an active account with a username."""
+    if request.session.get("admin"):
+        return None, True, None
+    user = current_user(request, db)
+    if not user:
+        return None, False, JSONResponse({"error": "login required"}, status_code=401)
+    if user.is_active is False:
+        return None, False, JSONResponse({"error": "account not active"}, status_code=403)
+    if not user.username:
+        return None, False, JSONResponse({"error": "choose a username first"}, status_code=403)
+    return user, False, None
+
+@app.get("/api/chat")
+async def chat_list(request: Request, db: Session = Depends(get_db)):
+    user, is_admin, error = chat_viewer(request, db)
+    if error:
+        return error
+    rows = db.query(ChatMessage).order_by(ChatMessage.id.desc()).limit(CHAT_HISTORY).all()
+    rows.reverse()
+    messages = [{
+        "id": m.id, "username": m.username, "is_admin": bool(m.is_admin), "text": m.text,
+        "at": _as_utc(m.created_at).isoformat(),
+        "mine": (is_admin and bool(m.is_admin)) or (user is not None and m.user_id == user.id and not m.is_admin),
+    } for m in rows]
+    return JSONResponse({"messages": messages, "muted": bool(user and user.is_muted), "admin": is_admin})
+
+@app.post("/api/chat")
+async def chat_send(request: Request, db: Session = Depends(get_db)):
+    user, is_admin, error = chat_viewer(request, db)
+    if error:
+        return error
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    text = auth.clean_chat_text(str(payload.get("text", "")) if isinstance(payload, dict) else "")
+    if not text:
+        return JSONResponse({"error": "Type a message first."}, status_code=400)
+    if len(text) > CHAT_MAX_CHARS:
+        return JSONResponse({"error": f"Messages can be up to {CHAT_MAX_CHARS} characters."}, status_code=400)
+    if not is_admin:
+        if user.is_muted:
+            return JSONResponse({"error": "You have been muted by the admin."}, status_code=403)
+        if auth.has_link(text):
+            return JSONResponse({"error": "Links are not allowed in chat."}, status_code=400)
+        key = f"u{user.id}"
+        now = datetime.datetime.utcnow()
+        last = chat_last.get(key)
+        if chat_rate.blocked(key) or (last and (now - last).total_seconds() < 1.5):
+            return JSONResponse({"error": "You are sending messages too fast. Slow down."}, status_code=429)
+        chat_rate.fail(key)
+        chat_last[key] = now
+    message = ChatMessage(
+        user_id=None if is_admin else user.id,
+        username="Admin" if is_admin else user.username,
+        is_admin=is_admin, text=text,
+    )
+    db.add(message)
+    db.commit()
+    return JSONResponse({"ok": True})
+
+@app.get("/admin/chat", response_class=HTMLResponse)
+async def admin_chat():
+    return HTMLResponse(ui.admin_chat_page())
+
+@app.post("/admin/chat/{message_id}/delete")
+async def admin_chat_delete(message_id: int, db: Session = Depends(get_db)):
+    message = db.query(ChatMessage).filter(ChatMessage.id == message_id).first()
+    if message:
+        db.delete(message)
+        db.commit()
+    return JSONResponse({"ok": True})
 
 # ---- admin ---------------------------------------------------------------
 admin_throttle = auth.Throttle(limit=6, window=900)
@@ -573,6 +749,8 @@ async def admin_home(db: Session = Depends(get_db)):
 async def admin_users(db: Session = Depends(get_db)):
     rows = db.query(User).order_by(User.id.desc()).all()
     users = [{"id": u.id, "email": u.email, "is_active": u.is_active is not False,
+              "full_name": u.full_name or "", "username": u.username or "",
+              "is_muted": bool(u.is_muted),
               "joined": u.created_at.strftime("%d %b %Y") if u.created_at else "-"} for u in rows]
     return HTMLResponse(ui.admin_users_page(users, REQUIRE_APPROVAL))
 
@@ -581,6 +759,14 @@ async def admin_toggle_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if user:
         user.is_active = not (user.is_active is not False)
+        db.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+@app.post("/admin/users/{user_id}/mute")
+async def admin_mute_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if user:
+        user.is_muted = not bool(user.is_muted)
         db.commit()
     return RedirectResponse("/admin/users", status_code=303)
 

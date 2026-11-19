@@ -145,16 +145,30 @@ def landing_page(signed_in: bool = False, stats: dict = None) -> str:
 
 
 # ------------------------------------------------------------------ auth pages
-def auth_page(mode: str, error: str = "", email: str = "", notice: str = "") -> str:
+def auth_page(mode: str, error: str = "", email: str = "", notice: str = "",
+              full_name: str = "", username: str = "") -> str:
     signup = mode == "signup"
     title = "Create your account" if signup else "Welcome back"
-    sub = ("Sign up with your email to get live signals on your dashboard."
+    sub = ("Join DH Binary Trader to get live signals and chat with other members."
            if signup else "Log in to see your live signals.")
     msg = ""
     if error:
         msg += f'<div class="msg err">{esc(error)}</div>'
     if notice:
         msg += f'<div class="msg ok">{esc(notice)}</div>'
+    if signup:
+        names = (f'<label for="full_name">Full name</label>'
+                 f'<input id="full_name" name="full_name" type="text" value="{esc(full_name)}" autocomplete="name" maxlength="60" required>'
+                 f'<label for="username">Username</label>'
+                 f'<input id="username" name="username" type="text" value="{esc(username)}" autocomplete="username" '
+                 f'maxlength="20" placeholder="e.g. dh_trader" required>'
+                 f'<p class="hint">This is the name other members see in chat. Letters, numbers and underscores.</p>')
+        email_field = (f'<label for="email">Email</label>'
+                       f'<input id="email" name="email" type="email" value="{esc(email)}" autocomplete="email" required>')
+    else:
+        names = ""
+        email_field = (f'<label for="email">Email or username</label>'
+                       f'<input id="email" name="email" type="text" value="{esc(email)}" autocomplete="username" required>')
     confirm = ('<label for="confirm">Confirm password</label>'
                '<input id="confirm" name="confirm" type="password" autocomplete="new-password" required>'
                if signup else "")
@@ -167,8 +181,8 @@ def auth_page(mode: str, error: str = "", email: str = "", notice: str = "") -> 
 <main class="auth-wrap"><div class="auth-card">
   <h1>{title}</h1><p class="sub">{sub}</p>{msg}
   <form method="post" action="/{mode}">
-    <label for="email">Email</label>
-    <input id="email" name="email" type="email" value="{esc(email)}" autocomplete="email" required>
+    {names}
+    {email_field}
     <label for="password">Password</label>
     <input id="password" name="password" type="password" autocomplete="{pw_auto}" required>
     {confirm}
@@ -177,6 +191,27 @@ def auth_page(mode: str, error: str = "", email: str = "", notice: str = "") -> 
   <p class="alt">{alt}</p>
 </div></main></body></html>"""
     return head(f"{title} | {SITE}") + "<body>" + body
+
+
+def profile_page(email: str, error: str = "", full_name: str = "", username: str = "") -> str:
+    right = ('<form method="post" action="/logout" style="display:inline">'
+             '<button class="linkbtn" type="submit">Log out</button></form>')
+    msg = f'<div class="msg err">{esc(error)}</div>' if error else ""
+    body = f"""
+{topbar(right)}
+<main class="auth-wrap"><div class="auth-card">
+  <h1>Finish your profile</h1>
+  <p class="sub">Add your name and pick a username to join the member chat. Signed in as {esc(email)}.</p>{msg}
+  <form method="post" action="/profile">
+    <label for="full_name">Full name</label>
+    <input id="full_name" name="full_name" type="text" value="{esc(full_name)}" autocomplete="name" maxlength="60" required>
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" value="{esc(username)}" maxlength="20" placeholder="e.g. dh_trader" required>
+    <p class="hint">Other members see your username in chat, never your full name or email.</p>
+    <button class="btn btn-primary" type="submit">Save and continue</button>
+  </form>
+</div></main></body></html>"""
+    return head(f"Your profile | {SITE}") + "<body>" + body
 
 
 def admin_login_page(error: str = "", not_configured: bool = False) -> str:
@@ -300,15 +335,89 @@ DASH_JS = r"""
 """
 
 
-def user_dashboard(email: str) -> str:
+CHAT_JS = r"""
+(function(){
+  var box = document.getElementById('chat-box'), form = document.getElementById('chat-form'),
+      input = document.getElementById('chat-input'), note = document.getElementById('chat-note'),
+      sendBtn = document.getElementById('chat-send'), isAdminView = !!window.CHAT_ADMIN;
+  var lastSig = '', timeFmt = new Intl.DateTimeFormat('en-US', {hour:'numeric', minute:'2-digit', hour12:true, timeZone:'Africa/Lagos'});
+  function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function render(d){
+    var sig = d.messages.map(function(m){ return m.id; }).join(',') + '|' + d.muted;
+    if (sig === lastSig) return;
+    var firstLoad = lastSig === '';
+    var nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 90;
+    lastSig = sig;
+    if (!d.messages.length){
+      box.innerHTML = '<div class="chat-empty">No messages yet. Say hello to the other members.</div>';
+    } else {
+      box.innerHTML = d.messages.map(function(m){
+        var del = isAdminView ? '<button class="chat-del" data-id="' + m.id + '" title="Delete message" type="button">&times;</button>' : '';
+        var badge = m.is_admin ? '<span class="chat-badge">Admin</span>' : '';
+        return '<div class="chat-row' + (m.mine ? ' mine' : '') + '"><div class="chat-bubble' + (m.is_admin ? ' admin' : '') + '">' +
+          '<div class="chat-meta"><b>' + esc(m.username) + '</b>' + badge + '<span>' + timeFmt.format(new Date(m.at)) + '</span>' + del + '</div>' +
+          '<div class="chat-text">' + esc(m.text) + '</div></div></div>';
+      }).join('');
+    }
+    if (firstLoad || nearBottom) box.scrollTop = box.scrollHeight;
+    if (d.muted){ input.disabled = true; sendBtn.disabled = true; input.placeholder = 'You have been muted by the admin'; }
+    else { input.disabled = false; sendBtn.disabled = false; input.placeholder = 'Message everyone...'; }
+  }
+  function poll(){
+    fetch('/api/chat', {credentials:'same-origin', cache:'no-store'}).then(function(r){
+      if (r.status === 401){ location.href = '/login'; return null; }
+      if (r.status === 403){ return null; }
+      return r.json();
+    }).then(function(d){ if (d) render(d); }).catch(function(){});
+  }
+  form.addEventListener('submit', function(ev){
+    ev.preventDefault();
+    var text = input.value.trim(); if (!text) return;
+    sendBtn.disabled = true; note.textContent = '';
+    fetch('/api/chat', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text: text})})
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(x){
+        if (x.ok){ input.value = ''; lastSig = ''; poll(); }
+        else { note.textContent = x.j.error || 'Could not send.'; }
+        sendBtn.disabled = false; input.focus();
+      }).catch(function(){ note.textContent = 'Could not send. Check your connection.'; sendBtn.disabled = false; });
+  });
+  box.addEventListener('click', function(ev){
+    var b = ev.target.closest('.chat-del'); if (!b) return;
+    fetch('/admin/chat/' + b.dataset.id + '/delete', {method:'POST', credentials:'same-origin'}).then(function(){ lastSig = ''; poll(); });
+  });
+  setInterval(poll, 4000); poll();
+})();
+"""
+
+
+def chat_card(admin: bool = False) -> str:
+    sub = ("Members can see and answer you here. Tap &times; to delete a message." if admin
+           else "Chat with other members and the admin. Be respectful. Links are not allowed.")
+    return f"""
+  <section class="botcol chat-card" id="chat">
+    <div class="colhead"><h2>Community chat</h2><span class="tag g" style="margin:0">Members</span></div>
+    <p class="chat-sub">{sub}</p>
+    <div class="chat-box" id="chat-box"><div class="chat-empty">Loading chat...</div></div>
+    <div class="chat-note" id="chat-note"></div>
+    <form class="chat-form" id="chat-form" autocomplete="off">
+      <input id="chat-input" type="text" maxlength="400" placeholder="Message everyone..." autocomplete="off">
+      <button id="chat-send" class="btn btn-primary btn-sm" type="submit">Send</button>
+    </form>
+  </section>
+  <script>window.CHAT_ADMIN = {"true" if admin else "false"};</script>
+  <script>{CHAT_JS}</script>"""
+
+
+def user_dashboard(email: str, chat_name: str = "") -> str:
     right = ('<form method="post" action="/logout" style="display:inline">'
              '<button class="linkbtn" type="submit">Log out</button></form>')
     body = f"""
 {topbar(right)}
 <main class="dash"><div class="wrap">
   <div class="dash-head">
-    <div><h1>Live signals</h1><p>Signed in as {esc(email)} &middot; <span id="conn">Connecting...</span></p></div>
-    <div class="tools"><button id="alerts" class="btn btn-ghost btn-sm" type="button">Sound on</button></div>
+    <div><h1>Live signals</h1><p>Signed in as {esc(chat_name or email)} &middot; <span id="conn">Connecting...</span></p></div>
+    <div class="tools"><a class="btn btn-ghost btn-sm" href="#chat">Chat</a><button id="alerts" class="btn btn-ghost btn-sm" type="button">Sound on</button></div>
   </div>
   <div class="botgrid">
     <section class="botcol">
@@ -328,6 +437,7 @@ def user_dashboard(email: str) -> str:
       <div class="feed" id="feed-3min"><div class="empty">Loading...</div></div>
     </section>
   </div>
+  <div style="margin-top:22px">{chat_card(False)}</div>
   <p class="fine">Times are shown in WAT. Place the trade at the entry time. {esc(RISK_TEXT)}</p>
 </div></main>
 <script>{DASH_JS}</script>
@@ -364,6 +474,8 @@ def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: d
   <div class="grid3">
     {bot_card("/admin/patience", "Patience Bot", "patience")}
     {bot_card("/admin/3min", "3 min Bot", "3min")}
+    <a class="card hub-card" href="/admin/chat"><h3>Community chat</h3>
+      <p>Read and reply to members, delete messages.</p></a>
     <a class="card hub-card" href="/admin/users"><h3>Members</h3>
       <p>{user_count} account(s){f", {waiting} waiting for approval" if waiting else ""}</p>
       <p style="margin-top:10px;font-size:.82rem">Enable or disable access.</p></a>
@@ -373,18 +485,38 @@ def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: d
     return head(f"Admin | {SITE}") + "<body>" + body
 
 
+def admin_chat_page() -> str:
+    right = '<a class="btn btn-ghost btn-sm" href="/admin">Back</a>'
+    body = f"""
+{topbar(right)}
+<main class="dash"><div class="wrap">
+  <div class="dash-head"><div><h1>Community chat</h1><p>You post as Admin, with a badge members can see.</p></div></div>
+  {chat_card(True)}
+</div></main></body></html>"""
+    return head(f"Chat | {SITE}") + "<body>" + body
+
+
 def admin_users_page(users: list, require_approval: bool, message: str = "") -> str:
     right = '<a class="btn btn-ghost btn-sm" href="/admin">Back</a>'
     rows = ""
     for u in users:
         active = bool(u["is_active"])
         chip = '<span class="chip win">Active</span>' if active else '<span class="chip wait">Disabled</span>'
+        if u.get("is_muted"):
+            chip += ' <span class="chip loss">Muted</span>'
         btn = (f'<button class="btn btn-sm btn-danger" type="submit">Disable</button>' if active
                else f'<button class="btn btn-sm btn-ok" type="submit">Enable</button>')
-        rows += (f'<tr><td>{esc(u["email"])}</td><td>{esc(u["joined"])}</td><td>{chip}</td>'
-                 f'<td><form method="post" action="/admin/users/{int(u["id"])}/toggle">{btn}</form></td></tr>')
+        mute = (f'<button class="btn btn-sm btn-ok" type="submit">Unmute</button>' if u.get("is_muted")
+                else f'<button class="btn btn-sm btn-ghost" type="submit">Mute chat</button>')
+        name = esc(u.get("full_name") or "-")
+        handle = f'@{esc(u["username"])}' if u.get("username") else "-"
+        rows += (f'<tr><td>{name}<br><small style="color:var(--muted)">{handle}</small></td><td>{esc(u["email"])}</td>'
+                 f'<td>{esc(u["joined"])}</td><td>{chip}</td>'
+                 f'<td><div style="display:flex;gap:6px;flex-wrap:wrap">'
+                 f'<form method="post" action="/admin/users/{int(u["id"])}/toggle">{btn}</form>'
+                 f'<form method="post" action="/admin/users/{int(u["id"])}/mute">{mute}</form></div></td></tr>')
     if not rows:
-        rows = '<tr><td colspan="4" class="empty">No members yet.</td></tr>'
+        rows = '<tr><td colspan="5" class="empty">No members yet.</td></tr>'
     note = ("New accounts start disabled. Enable them once payment is confirmed." if require_approval
             else "New accounts are active straight away. Set REQUIRE_APPROVAL=1 in Render to approve each one yourself.")
     msg = f'<div class="msg ok">{esc(message)}</div>' if message else ""
@@ -392,7 +524,7 @@ def admin_users_page(users: list, require_approval: bool, message: str = "") -> 
 {topbar(right)}
 <main class="dash"><div class="wrap">
   <div class="dash-head"><div><h1>Members</h1><p>{esc(note)}</p></div></div>{msg}
-  <div class="card scroll"><table class="table"><thead><tr><th>Email</th><th>Joined</th><th>Status</th><th></th></tr></thead>
+  <div class="card scroll"><table class="table"><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Status</th><th></th></tr></thead>
   <tbody>{rows}</tbody></table></div>
 </div></main></body></html>"""
     return head(f"Members | {SITE}") + "<body>" + body

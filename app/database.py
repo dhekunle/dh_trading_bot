@@ -38,6 +38,18 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    full_name = Column(String, nullable=True)
+    username = Column(String, unique=True, index=True, nullable=True)
+    is_muted = Column(Boolean, default=False)
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=True, index=True)    # empty for admin messages
+    username = Column(String)
+    is_admin = Column(Boolean, default=False)
+    text = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 class Stats(Base):
     __tablename__ = "stats"
@@ -53,16 +65,24 @@ class Stats(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    # Force create users table if missing
-    from sqlalchemy import inspect
+    from sqlalchemy import inspect, text
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():
         User.__table__.create(bind=engine)
-    # Older databases were created before accounts could be disabled
-    elif "is_active" not in [c["name"] for c in inspector.get_columns("users")]:
-        from sqlalchemy import text
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT TRUE"))
+        return
+    # Older databases were created before these columns existed
+    have = [c["name"] for c in inspector.get_columns("users")]
+    wanted = {
+        "is_active": "BOOLEAN DEFAULT TRUE",
+        "full_name": "VARCHAR",
+        "username": "VARCHAR",
+        "is_muted": "BOOLEAN DEFAULT FALSE",
+    }
+    with engine.begin() as conn:
+        for column, ddl in wanted.items():
+            if column not in have:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {column} {ddl}"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)"))
 
 def get_db():
     db = SessionLocal()

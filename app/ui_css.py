@@ -195,4 +195,26 @@ input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,140,255,.22)}
 .scroll{overflow-x:auto}
 .hub-card{display:block;transition:transform .15s,border-color .15s}
 .hub-card:hover{transform:translateY(-2px);border-color:rgba(79,140,255,.5)}
+
+/* sign up hint + chat */
+.hint{color:var(--muted);font-size:.78rem;margin-top:6px}
+.chat-card{padding:20px}
+.chat-sub{color:var(--muted);font-size:.84rem;margin:-4px 0 12px}
+.chat-box{height:360px;overflow-y:auto;background:rgba(0,0,0,.22);border:1px solid var(--line);border-radius:16px;padding:12px;
+  display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth}
+.chat-empty{margin:auto;color:var(--muted);text-align:center;font-size:.9rem;padding:20px}
+.chat-row{display:flex}.chat-row.mine{justify-content:flex-end}
+.chat-bubble{max-width:82%;background:var(--card2);border:1px solid var(--line);border-radius:14px 14px 14px 4px;padding:8px 12px}
+.chat-row.mine .chat-bubble{background:rgba(79,140,255,.16);border-color:rgba(79,140,255,.35);border-radius:14px 14px 4px 14px}
+.chat-bubble.admin{border-color:rgba(25,211,162,.5);background:rgba(25,211,162,.10)}
+.chat-meta{display:flex;align-items:center;gap:8px;font-size:.74rem;color:var(--muted);margin-bottom:2px}
+.chat-meta b{color:var(--text);font-size:.82rem}
+.chat-badge{font-size:.62rem;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:#04141c;background:var(--grad);padding:1px 7px;border-radius:999px}
+.chat-text{font-size:.93rem;word-break:break-word;white-space:pre-wrap}
+.chat-del{margin-left:auto;background:none;border:0;color:var(--red);font-size:1.1rem;cursor:pointer;line-height:1;padding:0 2px}
+.chat-form{display:flex;gap:8px;margin-top:10px}
+.chat-form input{flex:1;min-width:0;background:rgba(0,0,0,.28);border:1px solid var(--line);color:var(--text);padding:12px 14px;border-radius:12px;font-size:1rem;outline:none}
+.chat-form input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,140,255,.22)}
+.chat-form input:disabled{opacity:.5}
+.chat-note{color:var(--red);font-size:.8rem;min-height:1em;margin-top:8px}
 """

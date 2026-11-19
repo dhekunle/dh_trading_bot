@@ -80,3 +80,45 @@ class Throttle:
 
     def clear(self, key):
         self.hits.pop(key, None)
+
+
+# ---------------------------------------------------------------- profile + chat
+USERNAME_RE = re.compile(r"^[a-z0-9_]{3,20}$")
+RESERVED_USERNAMES = {"admin", "administrator", "support", "moderator", "mod", "staff", "owner",
+                      "root", "system", "official", "help", "dh", "dhbinarytrader", "dhbinary"}
+LINK_RE = re.compile(r"(https?://|www\.|t\.me/|telegram\.me/|wa\.me/|\b[a-z0-9\-]+\.(com|net|org|io|me|co|ly|app|xyz|info)\b)", re.I)
+
+
+def clean_name(name: str) -> str:
+    return " ".join((name or "").split())
+
+
+def name_problem(name: str):
+    if len(name) < 2 or len(name) > 60:
+        return "Please enter your full name (2 to 60 characters)."
+    letters = sum(1 for ch in name if ch.isalpha())
+    if letters < 2 or not all(ch.isalpha() or ch in " .'-" for ch in name):
+        return "Your name can only contain letters, spaces, dots, hyphens and apostrophes."
+    return None
+
+
+def clean_username(username: str) -> str:
+    return (username or "").strip().lower().lstrip("@")
+
+
+def username_problem(username: str):
+    if not USERNAME_RE.match(username):
+        return "Username must be 3 to 20 characters: letters, numbers and underscores only."
+    if username in RESERVED_USERNAMES or username.startswith("admin"):
+        return "That username is reserved. Please choose another."
+    return None
+
+
+def clean_chat_text(text: str) -> str:
+    """Single line, no control characters, trimmed."""
+    text = "".join(ch if ch.isprintable() else " " for ch in (text or ""))
+    return " ".join(text.split())
+
+
+def has_link(text: str) -> bool:
+    return bool(LINK_RE.search(text or ""))

@@ -47,3 +47,9 @@ Modular trading signal bot converted from Telegram-only to a full web dashboard 
 - `/health` for UptimeRobot
 - Members only see a signal after you tap ACTIVATE. Telegram posting still works as before.
 - Set DATABASE_URL to a hosted Postgres database. SQLite files are wiped when Render redeploys or restarts.
+
+## Members, chat and Telegram pictures
+- Sign up asks for full name, username and email. Members log in with email or username. Older accounts are asked to add a name and username the first time they log in.
+- Community chat on the member dashboard. Members chat with each other and the admin. Links are blocked for members, messages are rate limited, and the admin can delete messages or mute a member at `/admin/chat` and `/admin/users`.
+- Pausing a bot sends the SESSION CLOSE picture to that bot's Telegram group. Resuming sends SESSION START. The pictures are in `app/assets/stickers/`.
+- New database columns and the `chat_messages` table are created automatically on startup. On Supabase, also run: `alter table chat_messages enable row level security;`
