@@ -642,18 +642,56 @@ async def profile_submit(request: Request, full_name: str = Form(""), username: 
         return fail("Could not save your details. Please try again.")
     return RedirectResponse("/app", status_code=303)
 
-@app.get("/app", response_class=HTMLResponse)
-async def user_app(request: Request, db: Session = Depends(get_db)):
+def app_viewer(request: Request, db: Session):
+    """Who is opening a member page. Returns (user, is_admin, early_response).
+
+    The admin can look at member pages. Members need an active account and a finished profile.
+    """
     if request.session.get("admin"):
-        return HTMLResponse(ui.user_dashboard("Admin", chat_name="Admin"))
+        return None, True, None
     user = current_user(request, db)
     if not user:
-        return RedirectResponse("/login", status_code=303)
+        return None, False, RedirectResponse("/login", status_code=303)
     if user.is_active is False:
-        return HTMLResponse(ui.pending_page(user.email))
+        return None, False, HTMLResponse(ui.pending_page(user.email))
     if not user.username or not user.full_name:
-        return RedirectResponse("/profile", status_code=303)
+        return None, False, RedirectResponse("/profile", status_code=303)
+    return user, False, None
+
+@app.get("/app", response_class=HTMLResponse)
+async def user_app(request: Request, db: Session = Depends(get_db)):
+    """Home page after login: a menu of areas. Each one opens as its own page."""
+    user, is_admin, early = app_viewer(request, db)
+    if early:
+        return early
+    if is_admin:
+        return HTMLResponse(ui.user_hub("Admin", chat_name="Admin"))
+    return HTMLResponse(ui.user_hub(user.email, chat_name=user.username, me=member_cards(db, {user.id})[user.id]))
+
+@app.get("/app/signals", response_class=HTMLResponse)
+async def user_signals(request: Request, db: Session = Depends(get_db)):
+    user, is_admin, early = app_viewer(request, db)
+    if early:
+        return early
+    if is_admin:
+        return HTMLResponse(ui.user_dashboard("Admin", chat_name="Admin"))
     return HTMLResponse(ui.user_dashboard(user.email, chat_name=user.username, me=member_cards(db, {user.id})[user.id]))
+
+@app.get("/app/chat", response_class=HTMLResponse)
+async def user_chat(request: Request, db: Session = Depends(get_db)):
+    user, is_admin, early = app_viewer(request, db)
+    if early:
+        return early
+    return HTMLResponse(ui.chat_page("Admin" if is_admin else user.username))
+
+@app.get("/app/messages", response_class=HTMLResponse)
+async def user_messages(request: Request, db: Session = Depends(get_db)):
+    user, is_admin, early = app_viewer(request, db)
+    if early:
+        return early
+    if is_admin:  # private messages are for member accounts only
+        return RedirectResponse("/app", status_code=303)
+    return HTMLResponse(ui.messages_page(user.username))
 
 @app.get("/app/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, db: Session = Depends(get_db)):

@@ -66,3 +66,10 @@ Modular trading signal bot converted from Telegram-only to a full web dashboard 
 - It is sent to your personal chat only (`MY_PERSONAL_CHAT_ID`, or `MY_PERSONAL_CHAT_ID_3MIN` for the 3 min Bot), never the group.
 - If Groq is unavailable you still get a calendar-only summary. Resuming again the same day does not repeat it; use the Send briefing button on the bot dashboard to send it again.
 - Optional: set `NEWS_RSS_URLS` to a comma separated list of RSS feeds to change the headline sources.
+
+## Member pages
+After login members land on `/app`, a home page that lists the areas. Each opens as its own page:
+`/app/signals` (trades and signals), `/app/chat` (community chat), `/app/messages` (private messages, `?u=ID` opens a chat) and `/app/settings` (profile).
+
+## Database note
+`User.avatar` is a deferred column: the profile picture is only read from the database by `/api/avatar/{id}`, not every time a member is looked up.

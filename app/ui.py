@@ -253,7 +253,7 @@ def settings_page(me: dict, full_name: str = "") -> str:
   </div>
   <div class="chat-note" id="pnote" style="text-align:center"></div>
   <p class="hint">Username: @{esc(me.get("username", ""))} &middot; Name: {esc(full_name)}. Other members never see your email or full name.</p>
-  <a class="btn btn-ghost" href="/app" style="margin-top:12px">&larr; Back to dashboard</a>
+  <a class="btn btn-ghost" href="/app" style="margin-top:12px">&larr; Back to home</a>
 </div></main>
 <script>{AVATAR_JS}</script>
 <script>{SETTINGS_JS}</script>
@@ -480,7 +480,8 @@ CHAT_JS = r"""
   });
   box.addEventListener('click', function(ev){
     var w = ev.target.closest('.chat-who');
-    if (w && window.dhOpenDM){ window.dhOpenDM(parseInt(w.dataset.uid, 10)); return; }
+    if (w){ var uid = parseInt(w.dataset.uid, 10);
+      if (window.dhOpenDM) window.dhOpenDM(uid); else location.href = '/app/messages?u=' + uid; return; }
     var b = ev.target.closest('.chat-del'); if (!b) return;
     fetch('/admin/chat/' + b.dataset.id + '/delete', {method:'POST', credentials:'same-origin'}).then(function(){ lastSig = ''; poll(); });
   });
@@ -612,6 +613,8 @@ DM_JS = r"""
     });
   });
   window.dhOpenDM = openDM;
+  var want = new URLSearchParams(location.search).get('u');
+  if (want && /^[0-9]+$/.test(want)){ openDM(parseInt(want, 10)); history.replaceState(null, '', location.pathname); }
   setInterval(function(){ if (current !== null) loadThread(false); }, 3000);
   setInterval(loadThreads, 8000);
   loadThreads();
@@ -643,15 +646,108 @@ def dm_card() -> str:
   <script>{DM_JS}</script>"""
 
 
-def user_dashboard(email: str, chat_name: str = "", me: dict = None) -> str:
-    right = ('<form method="post" action="/logout" style="display:inline">'
-             '<button class="linkbtn" type="submit">Log out</button></form>')
+HUB_CSS = """<style>
+.hub-hello{display:flex;align-items:center;gap:14px;margin-bottom:24px}
+.hub-hello h1{font-size:1.5rem;letter-spacing:-.5px;line-height:1.2}
+.hub-hello p{color:var(--muted);font-size:.92rem}
+.hub-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+@media(max-width:700px){.hub-grid{grid-template-columns:1fr}}
+.tile{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px;
+  transition:transform .15s,border-color .15s,background .15s}
+.tile:hover{transform:translateY(-2px);border-color:rgba(79,140,255,.5);background:var(--card2)}
+.tile-ic{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;flex:none;color:var(--blue);background:rgba(79,140,255,.14)}
+.tile-ic.g{color:var(--green);background:rgba(25,211,162,.13)}
+.tile-ic.a{color:var(--amber);background:rgba(251,191,36,.13)}
+.tile-ic.p{color:#a78bfa;background:rgba(167,139,250,.14)}
+.tile h3{font-size:1.08rem;margin:0 0 3px;display:flex;align-items:center;gap:8px}
+.tile p{color:var(--muted);font-size:.88rem;margin:0}
+.tile .go{margin-left:auto;color:var(--muted);flex:none}
+.live-pill{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:800;letter-spacing:.8px;text-transform:uppercase;
+  color:var(--green);background:rgba(25,211,162,.13);padding:2px 9px;border-radius:999px}
+.live-pill::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);animation:blink 1.4s infinite}
+.live-pill[hidden]{display:none}
+@keyframes blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.live-pill::before{animation:none}}
+.page{max-width:760px;margin:0 auto}
+.page .chat-box{height:min(64vh,560px)}
+.back{display:inline-flex;align-items:center;gap:6px}
+</style>"""
+
+_ICON = {
+    "signals": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>',
+    "chat": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+    "dm": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
+    "profile": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+}
+_CHEV = '<svg class="go" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>'
+
+HUB_JS = r"""
+(function(){
+  function api(u){ return fetch(u, {credentials:'same-origin', cache:'no-store'}).then(function(r){
+    if (r.status === 401){ location.href = '/login'; return null; } return r.ok ? r.json() : null; }).catch(function(){ return null; }); }
+  function refresh(){
+    if (document.hidden) return;
+    api('/api/signals').then(function(d){
+      var el = document.getElementById('live-count'); if (!d || !el) return;
+      var n = d.signals.filter(function(s){ return s.status === 'active'; }).length;
+      el.hidden = !n; el.textContent = n + ' live';
+    });
+    var b = document.getElementById('dm-badge');
+    if (b) api('/api/dm/threads').then(function(d){
+      if (!d) return; b.hidden = !(d.unread > 0); b.textContent = d.unread > 99 ? '99+' : d.unread;
+    });
+  }
+  refresh(); setInterval(refresh, 15000);
+})();
+"""
+
+
+def _logout_form() -> str:
+    return ('<form method="post" action="/logout" style="display:inline">'
+            '<button class="linkbtn" type="submit">Log out</button></form>')
+
+
+def _home_link() -> str:
+    return '<a class="btn btn-ghost btn-sm back" href="/app">&larr; Home</a>'
+
+
+def user_hub(email: str, chat_name: str = "", me: dict = None) -> str:
+    """The page members land on after login: a menu that opens each area as its own page."""
+    def tile(href, icon, tint, title, text, extra=""):
+        return (f'<a class="tile" href="{href}"><span class="tile-ic {tint}">{_ICON[icon]}</span>'
+                f'<div><h3>{title}{extra}</h3><p>{text}</p></div>{_CHEV}</a>')
+    tiles = [
+        tile("/app/signals", "signals", "g", "Trades &amp; signals",
+             "Live signals from the Patience Bot and the 3 min Bot, with entry times and results.",
+             ' <span class="live-pill" id="live-count" hidden></span>'),
+        tile("/app/chat", "chat", "", "Community chat", "Talk with other members and the admin."),
+    ]
+    if me:
+        tiles.append(tile("/app/messages", "dm", "p", "Private messages", "One to one chats with other members.",
+                          ' <span id="dm-badge" class="dm-badge" hidden></span>'))
+        tiles.append(tile("/app/settings", "profile", "a", "Profile", "Your picture and account details."))
+    name = esc(chat_name or email)
+    hello = (avatar_html(me, 48) if me else "")
     body = f"""
-{topbar(right)}
+{topbar(_logout_form())}
+<main class="dash"><div class="wrap"><div class="page">
+  <div class="hub-hello">{hello}<div><h1>Welcome, {name}</h1><p>Choose where you want to go.</p></div></div>
+  <div class="hub-grid">{"".join(tiles)}</div>
+  <p class="fine">{esc(RISK_TEXT)}</p>
+</div></div></main>
+<script>{HUB_JS}</script>
+</body></html>"""
+    return head(f"Home | {SITE}", HUB_CSS) + "<body>" + body
+
+
+def user_dashboard(email: str, chat_name: str = "", me: dict = None) -> str:
+    """Trades and signals page (the bots)."""
+    body = f"""
+{topbar(_logout_form())}
 <main class="dash"><div class="wrap">
   <div class="dash-head">
     <div><h1>Live signals</h1><p>{avatar_html(me, 22) + " " if me else ""}Signed in as {esc(chat_name or email)} &middot; <span id="conn">Connecting...</span></p></div>
-    <div class="tools"><a class="btn btn-ghost btn-sm" href="#chat">Chat</a>{'<a class="btn btn-ghost btn-sm" href="#dm">Messages <span id="dm-badge-top" class="dm-badge" hidden></span></a><a class="btn btn-ghost btn-sm" href="/app/settings">Profile</a>' if me else ""}<button id="alerts" class="btn btn-ghost btn-sm" type="button">Sound on</button></div>
+    <div class="tools">{_home_link()}<button id="alerts" class="btn btn-ghost btn-sm" type="button">Sound on</button></div>
   </div>
   <div class="botgrid">
     <section class="botcol">
@@ -671,13 +767,36 @@ def user_dashboard(email: str, chat_name: str = "", me: dict = None) -> str:
       <div class="feed" id="feed-3min"><div class="empty">Loading...</div></div>
     </section>
   </div>
-  <div style="margin-top:22px">{chat_card(False)}</div>
-  {'<div style="margin-top:22px">' + dm_card() + '</div>' if me else ""}
   <p class="fine">Times are shown in WAT. Place the trade at the entry time. {esc(RISK_TEXT)}</p>
 </div></main>
 <script>{DASH_JS}</script>
 </body></html>"""
-    return head(f"Dashboard | {SITE}") + "<body>" + body
+    return head(f"Signals | {SITE}") + "<body>" + body
+
+
+def chat_page(chat_name: str = "") -> str:
+    body = f"""
+{topbar(_logout_form())}
+<main class="dash"><div class="wrap"><div class="page">
+  <div class="dash-head"><div><h1>Community chat</h1><p>Signed in as {esc(chat_name)}</p></div>
+    <div class="tools">{_home_link()}</div></div>
+  {chat_card(False)}
+</div></div></main>
+</body></html>"""
+    return head(f"Community chat | {SITE}", HUB_CSS) + "<body>" + body
+
+
+def messages_page(chat_name: str = "") -> str:
+    body = f"""
+{topbar(_logout_form())}
+<main class="dash"><div class="wrap"><div class="page">
+  <div class="dash-head"><div><h1>Private messages</h1><p>Signed in as {esc(chat_name)}</p></div>
+    <div class="tools">{_home_link()}</div></div>
+  <script>{AVATAR_JS}</script>
+  {dm_card()}
+</div></div></main>
+</body></html>"""
+    return head(f"Private messages | {SITE}", HUB_CSS) + "<body>" + body
 
 
 def pending_page(email: str) -> str:

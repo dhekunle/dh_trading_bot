@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, JSON
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, deferred
 from datetime import datetime
 from .config import DATABASE_URL
 
@@ -41,7 +41,8 @@ class User(Base):
     full_name = Column(String, nullable=True)
     username = Column(String, unique=True, index=True, nullable=True)
     is_muted = Column(Boolean, default=False)
-    avatar = Column(Text, nullable=True)           # base64 JPEG, resized in the browser
+    # deferred: the picture is only read from the database when asked for (avatar route), not on every member lookup
+    avatar = deferred(Column(Text, nullable=True))   # base64 JPEG, resized in the browser
     avatar_v = Column(Integer, default=0)          # bumps on every change so browsers refresh the picture
 
 class DirectMessage(Base):
