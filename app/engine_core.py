@@ -52,27 +52,30 @@ _news_cache = {"at": 0.0, "events": []}
 _news_lock = threading.Lock()
 
 
-def check_forex_news() -> List[dict]:
-    """High impact news within -15 to +30 minutes. Cached for 5 minutes."""
+def get_calendar_events() -> List[dict]:
+    """This week's economic calendar from the same feed as the news filter. Cached for 5 minutes."""
     with _news_lock:
         if time.time() - _news_cache["at"] < 300:
-            events = _news_cache["events"]
-        else:
-            events = None
-            try:
-                r = requests.get(
-                    "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-                    headers={"User-Agent": "Mozilla/5.0"}, timeout=5,
-                )
-                if r.status_code == 200:
-                    events = r.json()
-            except Exception as e:
-                print(f"[NEWS] {e}")
-            _news_cache["at"] = time.time()
-            if events is not None:
-                _news_cache["events"] = events
-            else:
-                events = _news_cache["events"]
+            return _news_cache["events"]
+        events = None
+        try:
+            r = requests.get(
+                "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=5,
+            )
+            if r.status_code == 200:
+                events = r.json()
+        except Exception as e:
+            print(f"[NEWS] {e}")
+        _news_cache["at"] = time.time()
+        if events is not None:
+            _news_cache["events"] = events
+        return _news_cache["events"]
+
+
+def check_forex_news() -> List[dict]:
+    """High impact news within -15 to +30 minutes. Cached for 5 minutes."""
+    events = get_calendar_events()
 
     now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     high_news = []

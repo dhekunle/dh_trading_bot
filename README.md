@@ -55,3 +55,14 @@ Modular trading signal bot converted from Telegram-only to a full web dashboard 
 - Skipping a signal deletes it from the Telegram group and posts a SKIP message.
 - Each bot keeps its own results, win rate and trade numbering (Patience and 3 min both start at #1).
 - New database columns and the `chat_messages` table are created automatically on startup. On Supabase, also run: `alter table chat_messages enable row level security;`
+
+## Profile pictures and private messages
+- Members add a profile picture at `/app/settings` (Profile button on the dashboard). The photo is cropped and shrunk to 256px in the browser, then stored in the database, so it survives redeploys. Pictures show in the community chat and private messages. Members without one get a coloured circle with their first letter.
+- Private messages: the dashboard has a Private messages card. Members search by username, or tap a name in the community chat, to start a 1 to 1 chat. Unread messages show a red badge. Links are blocked, messages are rate limited, and a member muted by the admin cannot send private messages either. The admin session has no private inbox and cannot read member messages.
+- New columns (`users.avatar`, `users.avatar_v`) and the `direct_messages` table are created automatically on startup. On Supabase, also run: `alter table direct_messages enable row level security;`
+
+## Morning briefing (personal chat only)
+- When you tap Resume on a bot for the first time each day, the bot reads today's economic calendar plus a few public headlines. Groq then writes a short briefing: mood of the day, news that matters (good or bad), good pairs to trade, pairs to be careful with, and the best time windows in WAT.
+- It is sent to your personal chat only (`MY_PERSONAL_CHAT_ID`, or `MY_PERSONAL_CHAT_ID_3MIN` for the 3 min Bot), never the group.
+- If Groq is unavailable you still get a calendar-only summary. Resuming again the same day does not repeat it; use the Send briefing button on the bot dashboard to send it again.
+- Optional: set `NEWS_RSS_URLS` to a comma separated list of RSS feeds to change the headline sources.

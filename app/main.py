@@ -2,19 +2,22 @@ import os
 import html as htmllib
 import threading
 import secrets
+import base64
+import re
 from fastapi import FastAPI, Request, Depends, Form
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 import datetime
 import pytz
 import asyncio
-from .database import init_db, get_db, SessionLocal, Trade, Stats, User, ChatMessage
+from .database import init_db, get_db, SessionLocal, Trade, Stats, User, ChatMessage, DirectMessage
 from .signal_engine import SignalEngine
 from .signal_engine_3min import SignalEngine3Min
 from .engine_core import news_status, SKIP_BAN_MINUTES
-from . import yf_data, auth, ui
+from . import yf_data, auth, ui, briefing
 import requests
 from .config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_TOKEN_3MIN,
@@ -176,6 +179,36 @@ def market_numbers(db, market: str):
     last = max([int(r[1] or 0) for r in rows], default=0)
     return wins, losses, draws, last + 1
 
+briefing_sent = {"patience": None, "3min": None}      # date of the last briefing, so resuming twice does not repeat it
+briefing_status = {"patience": "Morning briefing: not sent yet", "3min": "Morning briefing: not sent yet"}
+
+def send_morning_briefing(market: str, force: bool = False):
+    """News + good pairs for the day, sent to the admin's PERSONAL chat only (never the group)."""
+    try:
+        engine = ENGINES[market]
+        today = datetime.datetime.now(WAT).date()
+        if not force and briefing_sent[market] == today:
+            return
+        token, _group, personal_id = get_token_and_chat(market)
+        if not personal_id:
+            briefing_status[market] = "Morning briefing NOT sent: personal chat ID is missing" + (
+                " (MY_PERSONAL_CHAT_ID_3MIN or MY_PERSONAL_CHAT_ID)" if market == "3min" else " (MY_PERSONAL_CHAT_ID)")
+            return
+        briefing_sent[market] = today
+        briefing_status[market] = "Morning briefing: preparing..."
+        body, note = briefing.get_briefing(engine, force=force)
+        ok = send_telegram(briefing.compose(engine.name, body), token, personal_id)
+        stamp = datetime.datetime.now(WAT).strftime("%I:%M %p")
+        if ok:
+            briefing_status[market] = f"Morning briefing sent to your personal chat at {stamp} ({note})"
+        else:
+            briefing_sent[market] = None
+            briefing_status[market] = "Morning briefing FAILED: could not message your personal chat"
+    except Exception as e:
+        briefing_sent[market] = None
+        briefing_status[market] = f"Morning briefing error: {str(e)[:100]}"
+        print(f"[BRIEFING] {market}: {e}")
+
 def build_signal_message(trade: Trade, now=None) -> str:
     """Group message in the same format as the original bots."""
     engine = ENGINES.get(trade.market_type, patience_engine)
@@ -234,7 +267,7 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
     if engine is not None:
         when = engine.last_scan_at.strftime("%H:%M:%S") if engine.last_scan_at else "never"
         groq_state = "Groq connected" if engine.groq_configured else "Groq key missing"
-        scan_line = f"Last scan {when}: {engine.last_scan_info} · {yf_data.summary()} · {groq_state} · {telegram_status.get(market, '')}"
+        scan_line = f"Last scan {when}: {engine.last_scan_info} · {yf_data.summary()} · {groq_state} · {telegram_status.get(market, '')} · {briefing_status.get(market, '')}"
     scan_line = htmllib.escape(scan_line)
     vol_text = " · Strict volatility mode" if engine is not None and getattr(engine, "high_volatility_mode", False) else ""
     rows = []
@@ -268,6 +301,7 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
 <form action="/scan/{market}" method="post"><button class="btn btn-primary" type="submit" {'disabled' if paused else ''}>↻ &nbsp; Scan now</button></form>
 <form action="/admin/telegram-test/{market}" method="post"><button class="btn" type="submit">➤ &nbsp; Test Telegram</button></form>
 <form action="/pause/{market}" method="post"><button class="btn {pause_class}" type="submit">Ⅱ &nbsp; {pause_label}</button></form>
+<form action="/admin/briefing/{market}" method="post"><button class="btn" type="submit">🌅 &nbsp; Send briefing</button></form>
 <form action="/toggle-auto/{market}" method="post"><button class="btn" type="submit">Auto-scan: <span class="{'green' if auto_on else 'amber'}">{auto_status}</span></button></form>
 </div><div class="botstate"><span class="dot" style="background:{'var(--amber)' if paused else 'var(--green)'}"></span>{'Bot is paused. Automatic scanning is suspended.' if paused else 'Bot is running. Qualified signals publish automatically to Telegram.'}</div></article>
 <article class="panel"><div class="panelhead"><h2>Performance summary</h2><span class="chip">{title} only</span></div><div class="statsgrid">
@@ -408,6 +442,16 @@ async def toggle_pause(market: str):
     await asyncio.get_running_loop().run_in_executor(
         None, lambda: send_telegram(text, token, chat_id, market=m))
     ENGINES[m].set_info("Session closed (bot paused)" if paused else "Session started (bot resumed)")
+    if not paused:
+        # First resume of the day: study the day's news and send it to the personal chat
+        asyncio.get_running_loop().run_in_executor(None, send_morning_briefing, m, False)
+    return RedirectResponse(admin_path(m), status_code=303)
+
+@app.post("/admin/briefing/{market}")
+async def force_briefing(market: str):
+    m = "3min" if market == "3min" else "patience"
+    briefing_status[m] = "Morning briefing: preparing..."
+    asyncio.get_running_loop().run_in_executor(None, send_morning_briefing, m, True)
     return RedirectResponse(admin_path(m), status_code=303)
 
 @app.post("/toggle-auto/{market}")
@@ -609,7 +653,16 @@ async def user_app(request: Request, db: Session = Depends(get_db)):
         return HTMLResponse(ui.pending_page(user.email))
     if not user.username or not user.full_name:
         return RedirectResponse("/profile", status_code=303)
-    return HTMLResponse(ui.user_dashboard(user.email, chat_name=user.username))
+    return HTMLResponse(ui.user_dashboard(user.email, chat_name=user.username, me=member_cards(db, {user.id})[user.id]))
+
+@app.get("/app/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, db: Session = Depends(get_db)):
+    user = current_user(request, db)
+    if not user:
+        return RedirectResponse("/app", status_code=303)
+    if not user.username or not user.full_name:
+        return RedirectResponse("/profile", status_code=303)
+    return HTMLResponse(ui.settings_page(member_cards(db, {user.id})[user.id], user.full_name or ""))
 
 @app.get("/api/signals")
 async def api_signals(request: Request, db: Session = Depends(get_db)):
@@ -635,6 +688,174 @@ async def api_signals(request: Request, db: Session = Depends(get_db)):
         "signals": [public_signal(t) for t in rows],
         "stats": stats,
     })
+
+# ---- profile pictures and private messages -------------------------------------
+AVATAR_MAX_BYTES = 150_000
+avatar_rate = auth.Throttle(limit=10, window=3600)
+dm_rate = auth.Throttle(limit=20, window=60)
+dm_last = {}
+
+def member_cards(db, ids):
+    """{user_id: {id, username, av}} where av is the picture version, or 0 for no picture."""
+    ids = [i for i in ids if i]
+    if not ids:
+        return {}
+    rows = db.query(User.id, User.username, User.avatar_v, User.avatar.isnot(None)).filter(User.id.in_(ids)).all()
+    return {r[0]: {"id": r[0], "username": r[1] or "member", "av": (r[2] or 0) if r[3] else 0} for r in rows}
+
+def member_only(request: Request, db: Session):
+    """Returns (user, error_response). Private features are for signed-in members, not the admin session."""
+    user = current_user(request, db)
+    if not user:
+        msg = "Private messages and pictures are for member accounts." if request.session.get("admin") else "login required"
+        return None, JSONResponse({"error": msg}, status_code=403 if request.session.get("admin") else 401)
+    if user.is_active is False:
+        return None, JSONResponse({"error": "account not active"}, status_code=403)
+    if not user.username:
+        return None, JSONResponse({"error": "choose a username first"}, status_code=403)
+    return user, None
+
+@app.post("/api/avatar")
+async def avatar_upload(request: Request, db: Session = Depends(get_db)):
+    user, error = member_only(request, db)
+    if error:
+        return error
+    key = f"u{user.id}"
+    if avatar_rate.blocked(key):
+        return JSONResponse({"error": "You changed your picture too many times. Try again later."}, status_code=429)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    image = str(payload.get("image", "")) if isinstance(payload, dict) else ""
+    prefix = "data:image/jpeg;base64,"
+    if not image.startswith(prefix) or len(image) > AVATAR_MAX_BYTES * 2:
+        return JSONResponse({"error": "Please choose a photo (JPG or PNG)."}, status_code=400)
+    try:
+        raw = base64.b64decode(image[len(prefix):], validate=True)
+    except Exception:
+        return JSONResponse({"error": "That picture could not be read."}, status_code=400)
+    if len(raw) > AVATAR_MAX_BYTES or raw[:3] != b"\xff\xd8\xff":
+        return JSONResponse({"error": "That picture is too large or not a valid photo."}, status_code=400)
+    avatar_rate.fail(key)
+    user.avatar = image[len(prefix):]
+    user.avatar_v = (user.avatar_v or 0) + 1
+    db.commit()
+    return JSONResponse({"ok": True})
+
+@app.post("/api/avatar/remove")
+async def avatar_remove(request: Request, db: Session = Depends(get_db)):
+    user, error = member_only(request, db)
+    if error:
+        return error
+    user.avatar = None
+    user.avatar_v = (user.avatar_v or 0) + 1
+    db.commit()
+    return JSONResponse({"ok": True})
+
+@app.get("/api/avatar/{user_id}")
+async def avatar_get(user_id: int, db: Session = Depends(get_db)):
+    row = db.query(User.avatar).filter(User.id == user_id).first()
+    if not row or not row[0]:
+        return Response(status_code=404)
+    try:
+        data = base64.b64decode(row[0])
+    except Exception:
+        return Response(status_code=404)
+    return Response(content=data, media_type="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
+
+# Fixed paths first, then /api/dm/{other_id}
+@app.get("/api/dm/threads")
+async def dm_threads(request: Request, db: Session = Depends(get_db)):
+    me, error = member_only(request, db)
+    if error:
+        return error
+    rows = db.query(DirectMessage).filter(or_(DirectMessage.sender_id == me.id, DirectMessage.recipient_id == me.id)
+                                          ).order_by(DirectMessage.id.desc()).limit(500).all()
+    last = {}
+    for m in rows:
+        other = m.recipient_id if m.sender_id == me.id else m.sender_id
+        last.setdefault(other, m)
+    unread = dict(db.query(DirectMessage.sender_id, func.count(DirectMessage.id)).filter(
+        DirectMessage.recipient_id == me.id, DirectMessage.read_at.is_(None)).group_by(DirectMessage.sender_id).all())
+    cards = member_cards(db, set(last) | set(unread))
+    threads = []
+    for other, m in sorted(last.items(), key=lambda kv: kv[1].id, reverse=True):
+        card = cards.get(other)
+        if not card:
+            continue
+        threads.append({**card, "last": m.text[:80], "mine": m.sender_id == me.id,
+                        "at": _as_utc(m.created_at).isoformat(), "unread": int(unread.get(other, 0))})
+    return JSONResponse({"threads": threads, "unread": int(sum(unread.values()))})
+
+@app.get("/api/dm/users")
+async def dm_find_users(request: Request, q: str = "", db: Session = Depends(get_db)):
+    me, error = member_only(request, db)
+    if error:
+        return error
+    q = re.sub(r"[^a-z0-9_]", "", (q or "").lower())[:20]
+    query = db.query(User.id).filter(User.id != me.id, User.username.isnot(None),
+                                     or_(User.is_active.is_(None), User.is_active.is_(True)))
+    if q:
+        query = query.filter(User.username.startswith(q, autoescape=True))
+    ids = [r[0] for r in query.order_by(User.id.desc()).limit(15).all()]
+    cards = member_cards(db, ids)
+    return JSONResponse({"users": [cards[i] for i in ids if i in cards]})
+
+@app.get("/api/dm/{other_id}")
+async def dm_thread(other_id: int, request: Request, db: Session = Depends(get_db)):
+    me, error = member_only(request, db)
+    if error:
+        return error
+    other = member_cards(db, {other_id}).get(other_id)
+    if not other or other_id == me.id:
+        return JSONResponse({"error": "Member not found."}, status_code=404)
+    pair = or_((DirectMessage.sender_id == me.id) & (DirectMessage.recipient_id == other_id),
+               (DirectMessage.sender_id == other_id) & (DirectMessage.recipient_id == me.id))
+    rows = db.query(DirectMessage).filter(pair).order_by(DirectMessage.id.desc()).limit(CHAT_HISTORY).all()
+    rows.reverse()
+    db.query(DirectMessage).filter(DirectMessage.sender_id == other_id, DirectMessage.recipient_id == me.id,
+                                   DirectMessage.read_at.is_(None)).update(
+        {"read_at": datetime.datetime.utcnow()}, synchronize_session=False)
+    db.commit()
+    return JSONResponse({
+        "other": other, "muted": bool(me.is_muted),
+        "messages": [{"id": m.id, "text": m.text, "mine": m.sender_id == me.id,
+                      "at": _as_utc(m.created_at).isoformat()} for m in rows],
+    })
+
+@app.post("/api/dm/{other_id}")
+async def dm_send(other_id: int, request: Request, db: Session = Depends(get_db)):
+    me, error = member_only(request, db)
+    if error:
+        return error
+    if me.is_muted:
+        return JSONResponse({"error": "You have been muted by the admin."}, status_code=403)
+    recipient = db.query(User).filter(User.id == other_id).first()
+    if (not recipient or recipient.id == me.id or recipient.is_active is False or not recipient.username):
+        return JSONResponse({"error": "Member not found."}, status_code=404)
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    text = auth.clean_chat_text(str(payload.get("text", "")) if isinstance(payload, dict) else "")
+    if not text:
+        return JSONResponse({"error": "Type a message first."}, status_code=400)
+    if len(text) > CHAT_MAX_CHARS:
+        return JSONResponse({"error": f"Messages can be up to {CHAT_MAX_CHARS} characters."}, status_code=400)
+    if auth.has_link(text):
+        return JSONResponse({"error": "Links are not allowed in messages."}, status_code=400)
+    key = f"dm{me.id}"
+    now = datetime.datetime.utcnow()
+    last = dm_last.get(key)
+    if dm_rate.blocked(key) or (last and (now - last).total_seconds() < 1.0):
+        return JSONResponse({"error": "You are sending messages too fast. Slow down."}, status_code=429)
+    dm_rate.fail(key)
+    dm_last[key] = now
+    db.add(DirectMessage(sender_id=me.id, recipient_id=recipient.id, text=text))
+    db.commit()
+    return JSONResponse({"ok": True})
 
 # ---- community chat ----------------------------------------------------------
 chat_rate = auth.Throttle(limit=20, window=60)     # at most 20 messages a minute each
@@ -662,8 +883,11 @@ async def chat_list(request: Request, db: Session = Depends(get_db)):
         return error
     rows = db.query(ChatMessage).order_by(ChatMessage.id.desc()).limit(CHAT_HISTORY).all()
     rows.reverse()
+    cards = member_cards(db, {m.user_id for m in rows if m.user_id and not m.is_admin})
     messages = [{
         "id": m.id, "username": m.username, "is_admin": bool(m.is_admin), "text": m.text,
+        "user_id": None if m.is_admin else m.user_id,
+        "av": 0 if m.is_admin else cards.get(m.user_id, {}).get("av", 0),
         "at": _as_utc(m.created_at).isoformat(),
         "mine": (is_admin and bool(m.is_admin)) or (user is not None and m.user_id == user.id and not m.is_admin),
     } for m in rows]

@@ -15,6 +15,27 @@ def esc(value) -> str:
     return html.escape(str(value), quote=True)
 
 
+def avatar_html(user: dict, size: int = 32) -> str:
+    """Round profile picture, or a coloured circle with the first letter when there is none."""
+    style = f"width:{size}px;height:{size}px;"
+    if user and user.get("av"):
+        return f'<img class="av" style="{style}" src="/api/avatar/{int(user["id"])}?v={int(user["av"])}" alt="">'
+    letter = esc(((user or {}).get("username") or "?")[:1].upper())
+    return f'<span class="av av-i" style="{style}line-height:{size}px;font-size:{round(size * 0.46)}px">{letter}</span>'
+
+
+AVATAR_JS = r"""
+window.dhEsc = function(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+window.dhAvatar = function(u, size){
+  size = size || 32;
+  var st = 'width:' + size + 'px;height:' + size + 'px;';
+  if (u && u.av && u.id) return '<img class="av" style="' + st + '" src="/api/avatar/' + u.id + '?v=' + u.av + '" alt="" loading="lazy">';
+  var ch = ((u && u.username) || '?').charAt(0).toUpperCase();
+  return '<span class="av av-i" style="' + st + 'line-height:' + size + 'px;font-size:' + Math.round(size * 0.46) + 'px">' + window.dhEsc(ch) + '</span>';
+};
+"""
+
+
 def head(title: str, extra: str = "") -> str:
     return (
         '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
@@ -214,6 +235,77 @@ def profile_page(email: str, error: str = "", full_name: str = "", username: str
     return head(f"Your profile | {SITE}") + "<body>" + body
 
 
+def settings_page(me: dict, full_name: str = "") -> str:
+    right = ('<form method="post" action="/logout" style="display:inline">'
+             '<button class="linkbtn" type="submit">Log out</button></form>')
+    remove = '<button class="btn btn-ghost btn-sm" id="remove" type="button">Remove photo</button>' if me.get("av") else ""
+    body = f"""
+{topbar(right)}
+<main class="auth-wrap"><div class="auth-card">
+  <h1>Your profile</h1>
+  <p class="sub">Add a profile picture. Other members see it in the chat and in private messages.</p>
+  <div class="set-pic" id="pv">{avatar_html(me, 120)}</div>
+  <input id="file" type="file" accept="image/*" hidden>
+  <div class="set-actions">
+    <button class="btn btn-ghost btn-sm" id="choose" type="button">Choose photo</button>
+    <button class="btn btn-primary btn-sm" id="save" type="button" disabled>Save photo</button>
+    {remove}
+  </div>
+  <div class="chat-note" id="pnote" style="text-align:center"></div>
+  <p class="hint">Username: @{esc(me.get("username", ""))} &middot; Name: {esc(full_name)}. Other members never see your email or full name.</p>
+  <a class="btn btn-ghost" href="/app" style="margin-top:12px">&larr; Back to dashboard</a>
+</div></main>
+<script>{AVATAR_JS}</script>
+<script>{SETTINGS_JS}</script>
+</body></html>"""
+    return head(f"Profile | {SITE}") + "<body>" + body
+
+
+SETTINGS_JS = r"""
+(function(){
+  var file = document.getElementById('file'), pv = document.getElementById('pv'), save = document.getElementById('save'),
+      note = document.getElementById('pnote'), remove = document.getElementById('remove'), data = null;
+  function post(url, body){
+    return fetch(url, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); });
+  }
+  document.getElementById('choose').addEventListener('click', function(){ file.click(); });
+  file.addEventListener('change', function(){
+    var f = file.files && file.files[0]; if (!f) return;
+    note.textContent = ''; save.disabled = true; data = null;
+    var reader = new FileReader();
+    reader.onload = function(){
+      var img = new Image();
+      img.onload = function(){
+        // Centre crop to a square and shrink to 256px so the upload stays small
+        var s = Math.min(img.width, img.height), c = document.createElement('canvas');
+        c.width = c.height = 256;
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 256, 256);
+        ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 256, 256);
+        data = c.toDataURL('image/jpeg', 0.85);
+        pv.innerHTML = '<img class="av" style="width:120px;height:120px" src="' + data + '" alt="">';
+        save.disabled = false;
+      };
+      img.onerror = function(){ note.textContent = 'Could not read that picture. Try a JPG or PNG.'; };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(f);
+  });
+  save.addEventListener('click', function(){
+    if (!data) return;
+    save.disabled = true; note.textContent = 'Saving...';
+    post('/api/avatar', {image: data}).then(function(x){
+      if (x.ok) location.reload(); else { note.textContent = x.j.error || 'Could not save the picture.'; save.disabled = false; }
+    }).catch(function(){ note.textContent = 'Could not save. Check your connection.'; save.disabled = false; });
+  });
+  if (remove) remove.addEventListener('click', function(){
+    post('/api/avatar/remove').then(function(x){ if (x.ok) location.reload(); else note.textContent = x.j.error || 'Could not remove it.'; });
+  });
+})();
+"""
+
+
 def admin_login_page(error: str = "", not_configured: bool = False) -> str:
     msg = ""
     if not_configured:
@@ -343,7 +435,7 @@ CHAT_JS = r"""
   var lastSig = '', timeFmt = new Intl.DateTimeFormat('en-US', {hour:'numeric', minute:'2-digit', hour12:true, timeZone:'Africa/Lagos'});
   function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function render(d){
-    var sig = d.messages.map(function(m){ return m.id; }).join(',') + '|' + d.muted;
+    var sig = d.messages.map(function(m){ return m.id + ':' + (m.av || 0); }).join(',') + '|' + d.muted;
     if (sig === lastSig) return;
     var firstLoad = lastSig === '';
     var nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 90;
@@ -354,8 +446,12 @@ CHAT_JS = r"""
       box.innerHTML = d.messages.map(function(m){
         var del = isAdminView ? '<button class="chat-del" data-id="' + m.id + '" title="Delete message" type="button">&times;</button>' : '';
         var badge = m.is_admin ? '<span class="chat-badge">Admin</span>' : '';
+        var pic = m.is_admin ? '' : window.dhAvatar({id: m.user_id, username: m.username, av: m.av}, 22);
+        var who = (m.is_admin || m.mine || isAdminView || !m.user_id)
+          ? pic + '<b>' + esc(m.username) + '</b>'
+          : '<button class="chat-who" type="button" data-uid="' + m.user_id + '" title="Message ' + esc(m.username) + '">' + pic + '<b>' + esc(m.username) + '</b></button>';
         return '<div class="chat-row' + (m.mine ? ' mine' : '') + '"><div class="chat-bubble' + (m.is_admin ? ' admin' : '') + '">' +
-          '<div class="chat-meta"><b>' + esc(m.username) + '</b>' + badge + '<span>' + timeFmt.format(new Date(m.at)) + '</span>' + del + '</div>' +
+          '<div class="chat-meta">' + who + badge + '<span>' + timeFmt.format(new Date(m.at)) + '</span>' + del + '</div>' +
           '<div class="chat-text">' + esc(m.text) + '</div></div></div>';
       }).join('');
     }
@@ -383,6 +479,8 @@ CHAT_JS = r"""
       }).catch(function(){ note.textContent = 'Could not send. Check your connection.'; sendBtn.disabled = false; });
   });
   box.addEventListener('click', function(ev){
+    var w = ev.target.closest('.chat-who');
+    if (w && window.dhOpenDM){ window.dhOpenDM(parseInt(w.dataset.uid, 10)); return; }
     var b = ev.target.closest('.chat-del'); if (!b) return;
     fetch('/admin/chat/' + b.dataset.id + '/delete', {method:'POST', credentials:'same-origin'}).then(function(){ lastSig = ''; poll(); });
   });
@@ -406,18 +504,154 @@ def chat_card(admin: bool = False) -> str:
     </form>
   </section>
   <script>window.CHAT_ADMIN = {"true" if admin else "false"};</script>
+  <script>{AVATAR_JS}</script>
   <script>{CHAT_JS}</script>"""
 
 
-def user_dashboard(email: str, chat_name: str = "") -> str:
+DM_JS = r"""
+(function(){
+  var el = function(id){ return document.getElementById(id); };
+  var listView = el('dm-list-view'), threadView = el('dm-thread-view'), threadsEl = el('dm-threads'),
+      resultsEl = el('dm-results'), search = el('dm-search'), who = el('dm-who'), box = el('dm-box'),
+      form = el('dm-form'), input = el('dm-input'), note = el('dm-note'), sendBtn = el('dm-send');
+  var esc = window.dhEsc, av = window.dhAvatar, current = null, sigThreads = '', sigMsgs = '', timer = null;
+  var timeFmt = new Intl.DateTimeFormat('en-US', {hour:'numeric', minute:'2-digit', hour12:true, timeZone:'Africa/Lagos'});
+  function api(url, opts){
+    opts = opts || {}; opts.credentials = 'same-origin'; opts.cache = 'no-store';
+    return fetch(url, opts).then(function(r){
+      if (r.status === 401){ location.href = '/login'; return null; }
+      return r.json().then(function(j){ return {ok:r.ok, status:r.status, j:j}; });
+    }).catch(function(){ return null; });
+  }
+  function setBadge(n){
+    ['dm-badge', 'dm-badge-top'].forEach(function(id){
+      var b = el(id); if (!b) return;
+      if (n > 0){ b.textContent = n > 99 ? '99+' : n; b.hidden = false; } else { b.hidden = true; }
+    });
+  }
+  function item(u, right, sub){
+    return '<button type="button" class="dm-item" data-uid="' + u.id + '">' + av(u, 40) +
+      '<span class="dm-mid"><b>' + esc(u.username) + '</b>' + (sub ? '<span class="dm-last">' + esc(sub) + '</span>' : '') + '</span>' + (right || '') + '</button>';
+  }
+  function loadThreads(){
+    api('/api/dm/threads').then(function(x){
+      if (!x || !x.ok) return;
+      setBadge(x.j.unread);
+      var sig = JSON.stringify(x.j.threads.map(function(t){ return [t.id, t.av, t.last, t.unread, t.at]; }));
+      if (sig === sigThreads) return;
+      sigThreads = sig;
+      if (!x.j.threads.length){ threadsEl.innerHTML = '<div class="chat-empty">No conversations yet. Search for a member above and say hello.</div>'; return; }
+      threadsEl.innerHTML = x.j.threads.map(function(t){
+        var right = t.unread ? '<span class="dm-badge">' + t.unread + '</span>' : '<span class="dm-time">' + timeFmt.format(new Date(t.at)) + '</span>';
+        return item(t, right, (t.mine ? 'You: ' : '') + t.last);
+      }).join('');
+    });
+  }
+  function doSearch(){
+    api('/api/dm/users?q=' + encodeURIComponent(search.value.trim())).then(function(x){
+      if (!x || !x.ok) return;
+      resultsEl.innerHTML = x.j.users.length ? x.j.users.map(function(u){ return item(u, '', ''); }).join('')
+        : '<div class="chat-empty">No members found.</div>';
+    });
+  }
+  search.addEventListener('input', function(){
+    clearTimeout(timer);
+    if (!search.value.trim()){ resultsEl.innerHTML = ''; return; }
+    timer = setTimeout(doSearch, 250);
+  });
+  search.addEventListener('focus', function(){ if (!search.value.trim()) doSearch(); });
+
+  function renderThread(d, first){
+    who.innerHTML = av(d.other, 32) + '<b>' + esc(d.other.username) + '</b>';
+    var sig = d.messages.map(function(m){ return m.id; }).join(',') + '|' + d.muted;
+    if (sig === sigMsgs) return;
+    sigMsgs = sig;
+    var near = box.scrollHeight - box.scrollTop - box.clientHeight < 90;
+    box.innerHTML = d.messages.length ? d.messages.map(function(m){
+      return '<div class="chat-row' + (m.mine ? ' mine' : '') + '"><div class="chat-bubble"><div class="chat-meta"><span>' +
+        timeFmt.format(new Date(m.at)) + '</span></div><div class="chat-text">' + esc(m.text) + '</div></div></div>';
+    }).join('') : '<div class="chat-empty">No messages yet. Say hello.</div>';
+    if (first || near) box.scrollTop = box.scrollHeight;
+    input.disabled = sendBtn.disabled = !!d.muted;
+    if (d.muted) input.placeholder = 'You have been muted by the admin';
+  }
+  function loadThread(first){
+    if (current === null) return;
+    var id = current;
+    api('/api/dm/' + id).then(function(x){
+      if (!x || id !== current) return;
+      if (!x.ok){ note.textContent = x.j.error || 'Could not load this chat.'; if (x.status === 404) closeThread(); return; }
+      renderThread(x.j, first);
+    });
+  }
+  function openDM(id){
+    if (!id) return;
+    current = id; sigMsgs = '';
+    listView.hidden = true; threadView.hidden = false;
+    who.innerHTML = ''; note.textContent = ''; input.value = '';
+    box.innerHTML = '<div class="chat-empty">Loading...</div>';
+    search.value = ''; resultsEl.innerHTML = '';
+    el('dm').scrollIntoView({behavior:'smooth', block:'start'});
+    loadThread(true);
+  }
+  function closeThread(){
+    current = null; threadView.hidden = true; listView.hidden = false; sigThreads = ''; loadThreads();
+  }
+  el('dm-back').addEventListener('click', closeThread);
+  el('dm').addEventListener('click', function(ev){
+    var b = ev.target.closest('.dm-item'); if (b) openDM(parseInt(b.dataset.uid, 10));
+  });
+  form.addEventListener('submit', function(ev){
+    ev.preventDefault();
+    var text = input.value.trim(); if (!text || current === null) return;
+    sendBtn.disabled = true; note.textContent = '';
+    api('/api/dm/' + current, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text: text})}).then(function(x){
+      if (x && x.ok){ input.value = ''; sigMsgs = ''; loadThread(true); }
+      else { note.textContent = (x && x.j && x.j.error) || 'Could not send. Check your connection.'; }
+      sendBtn.disabled = false; input.focus();
+    });
+  });
+  window.dhOpenDM = openDM;
+  setInterval(function(){ if (current !== null) loadThread(false); }, 3000);
+  setInterval(loadThreads, 8000);
+  loadThreads();
+})();
+"""
+
+
+def dm_card() -> str:
+    return f"""
+  <section class="botcol dm-card" id="dm">
+    <div class="colhead"><h2>Private messages <span id="dm-badge" class="dm-badge" hidden></span></h2><span class="tag b" style="margin:0">1 to 1</span></div>
+    <div id="dm-list-view">
+      <p class="chat-sub">Message another member privately. Only the two of you can see these. Links are not allowed.</p>
+      <input id="dm-search" class="dm-search" type="text" maxlength="20" placeholder="Find a member by username..." autocomplete="off">
+      <div id="dm-results"></div>
+      <div class="sec-title">Conversations</div>
+      <div id="dm-threads"><div class="chat-empty">Loading...</div></div>
+    </div>
+    <div id="dm-thread-view" hidden>
+      <div class="dm-top"><button id="dm-back" class="btn btn-ghost btn-sm" type="button">&larr; Back</button><div id="dm-who"></div></div>
+      <div class="chat-box" id="dm-box"></div>
+      <div class="chat-note" id="dm-note"></div>
+      <form class="chat-form" id="dm-form" autocomplete="off">
+        <input id="dm-input" type="text" maxlength="400" placeholder="Write a message..." autocomplete="off">
+        <button id="dm-send" class="btn btn-primary btn-sm" type="submit">Send</button>
+      </form>
+    </div>
+  </section>
+  <script>{DM_JS}</script>"""
+
+
+def user_dashboard(email: str, chat_name: str = "", me: dict = None) -> str:
     right = ('<form method="post" action="/logout" style="display:inline">'
              '<button class="linkbtn" type="submit">Log out</button></form>')
     body = f"""
 {topbar(right)}
 <main class="dash"><div class="wrap">
   <div class="dash-head">
-    <div><h1>Live signals</h1><p>Signed in as {esc(chat_name or email)} &middot; <span id="conn">Connecting...</span></p></div>
-    <div class="tools"><a class="btn btn-ghost btn-sm" href="#chat">Chat</a><button id="alerts" class="btn btn-ghost btn-sm" type="button">Sound on</button></div>
+    <div><h1>Live signals</h1><p>{avatar_html(me, 22) + " " if me else ""}Signed in as {esc(chat_name or email)} &middot; <span id="conn">Connecting...</span></p></div>
+    <div class="tools"><a class="btn btn-ghost btn-sm" href="#chat">Chat</a>{'<a class="btn btn-ghost btn-sm" href="#dm">Messages <span id="dm-badge-top" class="dm-badge" hidden></span></a><a class="btn btn-ghost btn-sm" href="/app/settings">Profile</a>' if me else ""}<button id="alerts" class="btn btn-ghost btn-sm" type="button">Sound on</button></div>
   </div>
   <div class="botgrid">
     <section class="botcol">
@@ -438,6 +672,7 @@ def user_dashboard(email: str, chat_name: str = "") -> str:
     </section>
   </div>
   <div style="margin-top:22px">{chat_card(False)}</div>
+  {'<div style="margin-top:22px">' + dm_card() + '</div>' if me else ""}
   <p class="fine">Times are shown in WAT. Place the trade at the entry time. {esc(RISK_TEXT)}</p>
 </div></main>
 <script>{DASH_JS}</script>

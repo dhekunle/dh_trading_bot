@@ -41,6 +41,17 @@ class User(Base):
     full_name = Column(String, nullable=True)
     username = Column(String, unique=True, index=True, nullable=True)
     is_muted = Column(Boolean, default=False)
+    avatar = Column(Text, nullable=True)           # base64 JPEG, resized in the browser
+    avatar_v = Column(Integer, default=0)          # bumps on every change so browsers refresh the picture
+
+class DirectMessage(Base):
+    __tablename__ = "direct_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, index=True)
+    recipient_id = Column(Integer, index=True)
+    text = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    read_at = Column(DateTime, nullable=True)
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
@@ -77,6 +88,8 @@ def init_db():
         "full_name": "VARCHAR",
         "username": "VARCHAR",
         "is_muted": "BOOLEAN DEFAULT FALSE",
+        "avatar": "TEXT",
+        "avatar_v": "INTEGER DEFAULT 0",
     }
     with engine.begin() as conn:
         for column, ddl in wanted.items():

@@ -217,4 +217,26 @@ input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,140,255,.22)}
 .chat-form input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,140,255,.22)}
 .chat-form input:disabled{opacity:.5}
 .chat-note{color:var(--red);font-size:.8rem;min-height:1em;margin-top:8px}
+
+/* profile pictures + private messages */
+.av{border-radius:50%;object-fit:cover;flex:none;display:inline-block;vertical-align:middle;background:var(--card2)}
+.av-i{text-align:center;font-weight:800;color:#04141c;background:var(--grad)}
+.chat-who{display:inline-flex;align-items:center;gap:6px;background:none;border:0;color:inherit;font:inherit;padding:0;cursor:pointer}
+.chat-who:hover b{text-decoration:underline}
+.chat-meta .av,.chat-meta .chat-who{flex:none}
+.dm-card{padding:20px}
+.dm-search{width:100%;background:rgba(0,0,0,.28);border:1px solid var(--line);color:var(--text);padding:12px 14px;border-radius:12px;font-size:1rem;outline:none;margin-bottom:10px}
+.dm-search:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(79,140,255,.22)}
+.dm-item{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);color:var(--text);padding:10px 12px;border-radius:14px;margin-bottom:8px;cursor:pointer;font:inherit}
+.dm-item:hover{background:var(--card2)}
+.dm-mid{display:flex;flex-direction:column;min-width:0;flex:1}
+.dm-mid b{font-size:.92rem}
+.dm-last{color:var(--muted);font-size:.82rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dm-time{color:var(--muted);font-size:.72rem;flex:none}
+.dm-badge{display:inline-block;min-width:20px;padding:1px 7px;border-radius:999px;background:var(--red);color:#fff;font-size:.72rem;font-weight:800;text-align:center;line-height:1.5}
+.dm-badge[hidden]{display:none}
+.dm-top{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+#dm-who{display:flex;align-items:center;gap:8px}
+.set-pic{display:flex;justify-content:center;margin:16px 0}
+.set-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:6px}
 """
