@@ -335,7 +335,8 @@ DASH_JS = r"""
   function esc(s){ return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function t(iso){ return iso ? timeFmt.format(new Date(iso)) + ' WAT' : '-'; }
   function now(){ return Date.now() + offset; }
-  function mmss(ms){ var s = Math.max(0, Math.round(ms/1000)), m = Math.floor(s/60); return m + ':' + ('0' + (s%60)).slice(-2); }
+  function mmss(ms){ var s = Math.max(0, Math.ceil(ms/1000)), m = Math.floor(s/60); return m + ':' + ('0' + (s%60)).slice(-2); }
+  function minuteFloor(iso){ var ms = Date.parse(iso); return Math.floor(ms/60000)*60000; }  // Telegram and the cards show hours:minutes only, so count to that minute exactly
 
   function liveCard(s){
     var dir = s.action === 'BUY' ? 'buy' : 'sell', arrow = s.action === 'BUY' ? '&#9650;' : '&#9660;';
@@ -379,7 +380,7 @@ DASH_JS = r"""
   function tick(){
     var els = document.querySelectorAll('.countdown');
     for (var i = 0; i < els.length; i++){
-      var e = els[i], en = Date.parse(e.dataset.entry), ex = Date.parse(e.dataset.exp), n = now(), txt;
+      var e = els[i], en = minuteFloor(e.dataset.entry), ex = minuteFloor(e.dataset.exp), n = now(), txt;
       if (n < en) txt = 'Enter in ' + mmss(en - n);
       else if (n < ex) txt = 'In trade &middot; expires in ' + mmss(ex - n);
       else txt = 'Expired &middot; waiting for the result';
@@ -403,12 +404,13 @@ DASH_JS = r"""
     try{ if (window.Notification && Notification.permission === 'granted') new Notification('New signal: ' + s.asset + ' ' + s.action, {body: s.expiry_mins + ' minute trade. Open the dashboard for entry time.'}); }catch(e){}
   }
   function poll(){
+    var t0 = Date.now();
     fetch('/api/signals', {credentials:'same-origin', cache:'no-store'}).then(function(r){
       if (r.status === 401 || r.status === 403){ location.href = '/login'; return null; }
       return r.json();
     }).then(function(d){
       if (!d) return;
-      offset = Date.parse(d.server_now) - Date.now();
+      offset = Date.parse(d.server_now) - (t0 + Date.now()) / 2;
       var ids = d.signals.map(function(s){ return s.id; });
       if (seen !== null){ d.signals.forEach(function(s){ if (s.status === 'active' && seen.indexOf(s.id) < 0) alertNew(s); }); }
       seen = ids;
@@ -422,7 +424,7 @@ DASH_JS = r"""
     if (soundOn) beep();
     try{ if (window.Notification && Notification.permission === 'default') Notification.requestPermission(); }catch(e){}
   });
-  setInterval(tick, 1000); setInterval(poll, 4000); poll();
+  setInterval(tick, 200); setInterval(poll, 4000); poll();
 })();
 """
 
