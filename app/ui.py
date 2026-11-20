@@ -814,7 +814,8 @@ def pending_page(email: str) -> str:
 
 # ---------------------------------------------------------------------- admin
 def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: dict) -> str:
-    right = ('<a class="btn btn-ghost btn-sm" href="/app">User view</a>'
+    right = ('<a class="btn btn-sm" href="/admin/pairs">Pairs record</a>'
+             '<a class="btn btn-ghost btn-sm" href="/app">User view</a>'
              '<form method="post" action="/logout" style="display:inline"><button class="linkbtn" type="submit">Log out</button></form>')
     def bot_card(path, name, key):
         info = esc(bot_info.get(key, ""))
@@ -837,6 +838,51 @@ def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: d
   <p class="fine"><a href="/status" style="text-decoration:underline">Price data and bot status (JSON)</a></p>
 </div></main></body></html>"""
     return head(f"Admin | {SITE}") + "<body>" + body
+
+
+def admin_pairs_page(rows: list, market: str, period: str, min_trades: int) -> str:
+    right = ('<a class="btn btn-ghost btn-sm" href="/admin">Back</a>')
+    def tabs(param, options, current):
+        out = ""
+        for key, label in options:
+            q = {"market": market, "period": period}
+            q[param] = key
+            cls = "tab on" if key == current else "tab"
+            out += f'<a class="{cls}" href="/admin/pairs?market={q["market"]}&amp;period={q["period"]}">{label}</a>'
+        return f'<div class="tabs">{out}</div>'
+    market_tabs = tabs("market", [("all", "All bots"), ("patience", "Patience Bot"), ("3min", "3 min Bot")], market)
+    period_tabs = tabs("period", [("all", "All time"), ("30", "Last 30 days"), ("7", "Last 7 days"), ("1", "Today")], period)
+
+    body_rows = ""
+    for r in rows:
+        trades = r["wins"] + r["losses"]
+        rate = "-" if r["rate"] is None else f'{r["rate"]}%'
+        color = "var(--muted)" if r["rate"] is None else ("var(--green)" if r["rate"] >= 60 else ("var(--red)" if r["rate"] < 50 else "var(--amber)"))
+        body_rows += (
+            f'<tr><td><b>{esc(r["pair"])}</b></td>'
+            f'<td style="font-weight:800;font-size:1.1rem">{trades}</td>'
+            f'<td style="color:var(--green);font-weight:800;font-size:1.1rem">{r["wins"]}</td>'
+            f'<td style="color:var(--red);font-weight:800;font-size:1.1rem">{r["losses"]}</td>'
+            f'<td><b style="color:{color}">{rate}</b></td></tr>'
+        )
+    if not body_rows:
+        body_rows = '<tr><td colspan="5" class="empty">No results recorded yet. Log WIN or LOSS on trades and they will show here.</td></tr>'
+    wins = sum(r["wins"] for r in rows)
+    losses = sum(r["losses"] for r in rows)
+    decided = wins + losses
+    overall = f"{round(wins * 100 / decided)}%" if decided else "-"
+    body = f"""
+{topbar(right)}
+<main class="dash"><div class="wrap">
+  <div class="dash-head"><div><h1>Pairs record</h1>
+    <p>Number of trades, wins and losses for each pair.</p></div></div>
+  {market_tabs}{period_tabs}
+  <div class="statbox" style="margin-bottom:18px"><small>All pairs</small><div class="num">{decided} trades<span>{wins} wins &middot; {losses} losses &middot; {overall}</span></div></div>
+  <div class="card scroll"><table class="table"><thead><tr><th>Pair</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win rate</th></tr></thead>
+  <tbody>{body_rows}</tbody></table></div>
+  <p class="fine">Trades = wins + losses. Draws, skipped and expired signals are not counted.</p>
+</div></main></body></html>"""
+    return head(f"Pairs record | {SITE}") + "<body>" + body
 
 
 def admin_chat_page() -> str:

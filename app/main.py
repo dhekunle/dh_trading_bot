@@ -209,6 +209,36 @@ def send_morning_briefing(market: str, force: bool = False):
         briefing_status[market] = f"Morning briefing error: {str(e)[:100]}"
         print(f"[BRIEFING] {market}: {e}")
 
+ENTRY_MIN_LEAD_SECONDS = 30
+
+def entry_schedule(now, expiry_mins: int) -> dict:
+    """Entry always starts exactly on a whole minute (seconds = 00).
+
+    Telegram only shows hours and minutes, so an entry of 3:45:20 was shown as "3:45" while the
+    website kept counting 20 more seconds. Now the entry is the next whole minute, so Telegram and the
+    website countdown hit zero together. If that minute is less than 30s away, the following minute is used.
+    """
+    entry = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
+    if (entry - now).total_seconds() < ENTRY_MIN_LEAD_SECONDS:
+        entry += datetime.timedelta(minutes=1)
+    expire = entry + datetime.timedelta(minutes=expiry_mins)
+    mart_entry = expire + datetime.timedelta(minutes=1)
+    mart_expire = mart_entry + datetime.timedelta(minutes=expiry_mins)
+    return {"activated_at": now, "entry_at": entry, "expire_at": expire,
+            "mart_entry_at": mart_entry, "mart_expire_at": mart_expire}
+
+def schedule_details(now, expiry_mins: int) -> dict:
+    return {k: v.astimezone(datetime.timezone.utc).isoformat() for k, v in entry_schedule(now, expiry_mins).items()}
+
+def _stored_time(details: dict, key: str, fallback):
+    raw = (details or {}).get(key)
+    if not raw:
+        return fallback
+    try:
+        return datetime.datetime.fromisoformat(raw).astimezone(WAT)
+    except Exception:
+        return fallback
+
 def build_signal_message(trade: Trade, now=None) -> str:
     """Group message in the same format as the original bots."""
     engine = ENGINES.get(trade.market_type, patience_engine)
@@ -216,10 +246,13 @@ def build_signal_message(trade: Trade, now=None) -> str:
     session_text = ", ".join(sessions) if sessions else "No active session"
     vol_tag = "\nSTRICT MODE - High Volatility" if getattr(engine, "high_volatility_mode", False) else ""
     now = now or datetime.datetime.now(WAT)
-    entry = now + datetime.timedelta(minutes=1)
-    expire = entry + datetime.timedelta(minutes=trade.expiry_mins)
-    mart_entry = expire + datetime.timedelta(minutes=1)
-    mart_expire = mart_entry + datetime.timedelta(minutes=trade.expiry_mins)
+    sched = entry_schedule(now, trade.expiry_mins)
+    d = trade.details or {}
+    # Use the exact times saved on the trade so Telegram and the website always agree
+    entry = _stored_time(d, "entry_at", sched["entry_at"])
+    expire = _stored_time(d, "expire_at", sched["expire_at"])
+    mart_entry = _stored_time(d, "mart_entry_at", sched["mart_entry_at"])
+    mart_expire = _stored_time(d, "mart_expire_at", sched["mart_expire_at"])
     plural = "s" if trade.expiry_mins > 1 else ""
     mg = f" (Martingale {trade.martingale_level})" if trade.martingale_level else ""
     return (
@@ -294,7 +327,7 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
     pause_class = "btn-green" if paused else ""
     html = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090a0f"><meta http-equiv="refresh" content="20"><title>{title} · Admin</title>{STYLE}</head>
 <body><main class="container">
-<header class="top"><div class="brand"><div class="mark">⌁</div><div><h1>{title}</h1><p>DH Binary Trader <span class="muted">/ Operations console</span></p></div></div><a class="adminlink" href="/admin">← Admin hub</a></header>
+<header class="top"><div class="brand"><div class="mark">⌁</div><div><h1>{title}</h1><p>DH Binary Trader <span class="muted">/ Operations console</span></p></div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="adminlink" href="/admin/pairs">📊 Pairs record</a><a class="adminlink" href="/admin">← Admin hub</a></div></header>
 <section class="statusbar"><div class="statusitem"><div class="eyebrow">Market session</div><div class="value">{htmllib.escape(session_text)}</div><div class="muted" style="font-size:12px">{now}</div></div><div class="statusitem"><div class="eyebrow">Market quality</div><div class="value {q_class}">{htmllib.escape(str(quality))}</div><div class="muted" style="font-size:12px">{htmllib.escape(str(reason))}{htmllib.escape(vol_text)}</div></div><div class="statusitem"><div class="eyebrow">Auto scan · Bot</div><div class="value {'green' if auto_on and not paused else 'amber'}">{auto_status} · {bot_status}</div><div class="muted" style="font-size:12px">Next trade #{next_trade}</div></div></section>
 <div class="notice"><strong>System status</strong> · {scan_line}</div>
 <section class="layout"><article class="panel"><div class="panelhead"><h2>Bot controls</h2><span class="chip">{bot_status}</span></div><div class="controls">
@@ -365,14 +398,8 @@ async def post_signal(trade_id: int, db: Session = Depends(get_db)):
     if not trade or trade.status != "pending":
         return RedirectResponse("/admin", status_code=303)
     now = datetime.datetime.now(WAT)
-    entry = now + datetime.timedelta(minutes=1)
-    expire = entry + datetime.timedelta(minutes=trade.expiry_mins)
-    mart_entry = expire + datetime.timedelta(minutes=1)
-    mart_expire = mart_entry + datetime.timedelta(minutes=trade.expiry_mins)
     details = dict(trade.details or {})
-    details.update({k: v.astimezone(datetime.timezone.utc).isoformat() for k, v in {
-        "activated_at": now, "entry_at": entry, "expire_at": expire,
-        "mart_entry_at": mart_entry, "mart_expire_at": mart_expire}.items()})
+    details.update(schedule_details(now, trade.expiry_mins))
     trade.details = details
     trade.status = "active"
     db.commit()
@@ -1008,6 +1035,61 @@ async def admin_home(db: Session = Depends(get_db)):
     info = {m: f"{e.last_scan_info} · {telegram_status.get(m, '')}" for m, e in ENGINES.items()}
     return HTMLResponse(ui.admin_hub(len(users), waiting, REQUIRE_APPROVAL, info))
 
+# ---- pairs record ---------------------------------------------------------------
+PAIR_PERIODS = {"all": None, "30": 30, "7": 7, "1": 1}
+PAIR_MIN_TRADES = 5   # a pair needs at least this many decided trades before it is called good or weak
+
+def pair_verdict(wins: int, losses: int) -> str:
+    decided = wins + losses
+    if decided < PAIR_MIN_TRADES:
+        return "new"
+    rate = wins * 100 / decided
+    if rate >= 60:
+        return "good"
+    if rate < 50:
+        return "weak"
+    return "ok"
+
+def pairs_record(db: Session, market: str = "all", period: str = "all") -> list:
+    q = db.query(Trade).filter(Trade.status.in_(RESOLVED))
+    if market in ("patience", "3min"):
+        q = q.filter(Trade.market_type == market)
+    days = PAIR_PERIODS.get(period)
+    if days:
+        q = q.filter(Trade.created_at >= datetime.datetime.utcnow() - datetime.timedelta(days=days))
+    pairs = {}
+    for t in q.all():
+        name = (t.asset or "Unknown").upper()
+        row = pairs.setdefault(name, {"pair": name, "wins": 0, "losses": 0, "draws": 0,
+                                      "buy_w": 0, "buy_l": 0, "sell_w": 0, "sell_l": 0, "last": []})
+        res = t.status
+        row[{"win": "wins", "loss": "losses", "draw": "draws"}[res]] += 1
+        side = "buy" if (t.action or "").upper() == "BUY" else "sell"
+        if res == "win":
+            row[side + "_w"] += 1
+        elif res == "loss":
+            row[side + "_l"] += 1
+        row["last"].append((t.id, res))
+    out = []
+    for row in pairs.values():
+        decided = row["wins"] + row["losses"]
+        row["total"] = decided + row["draws"]
+        row["rate"] = round(row["wins"] * 100 / decided) if decided else None
+        row["verdict"] = pair_verdict(row["wins"], row["losses"])
+        row["last"] = [r for _, r in sorted(row["last"])][-5:]   # five most recent results, oldest first
+        out.append(row)
+    # pairs with enough trades first (best win rate on top), pairs with too few trades go below them
+    out.sort(key=lambda r: (r["verdict"] != "new", r["rate"] if r["rate"] is not None else -1, r["wins"] + r["losses"]), reverse=True)
+    return out
+
+@app.get("/admin/pairs", response_class=HTMLResponse)
+async def admin_pairs(market: str = "all", period: str = "all", db: Session = Depends(get_db)):
+    if market not in ("all", "patience", "3min"):
+        market = "all"
+    if period not in PAIR_PERIODS:
+        period = "all"
+    return HTMLResponse(ui.admin_pairs_page(pairs_record(db, market, period), market, period, PAIR_MIN_TRADES))
+
 @app.get("/admin/users", response_class=HTMLResponse)
 async def admin_users(db: Session = Depends(get_db)):
     rows = db.query(User).order_by(User.id.desc()).all()
@@ -1148,13 +1230,7 @@ def scan_market(market: str):
             level = three_min_martingale_level if market == "3min" else 0
             # Publish immediately: no admin approval or click-to-activate delay.
             now = datetime.datetime.now(WAT)
-            entry = now + datetime.timedelta(minutes=1)
-            expire = entry + datetime.timedelta(minutes=expiry)
-            mart_entry = expire + datetime.timedelta(minutes=1)
-            mart_expire = mart_entry + datetime.timedelta(minutes=expiry)
-            data.update({k: v.astimezone(datetime.timezone.utc).isoformat() for k, v in {
-                "activated_at": now, "entry_at": entry, "expire_at": expire,
-                "mart_entry_at": mart_entry, "mart_expire_at": mart_expire}.items()})
+            data.update(schedule_details(now, expiry))
             trade = Trade(
                 trade_number=tnum, asset=asset, action=direction, expiry_mins=expiry,
                 price=data["price"], confidence="High", status="active", details=data,
