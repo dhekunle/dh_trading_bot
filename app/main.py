@@ -366,8 +366,12 @@ async def start_scan(market: str):
     asyncio.get_running_loop().run_in_executor(None, scan_market, m)
     return RedirectResponse(admin_path(m), status_code=303)
 
+def back_path(market: str, back: str = "") -> str:
+    """Where to go after Win / Loss / Skip: the admin hub if the button was pressed there, else that bot's page."""
+    return "/admin" if back == "/admin" else admin_path(market)
+
 @app.post("/skip/{trade_id}")
-async def skip_signal(trade_id: int, db: Session = Depends(get_db)):
+async def skip_signal(trade_id: int, back: str = Form(""), db: Session = Depends(get_db)):
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     if not trade or trade.status not in ("pending", "active") or trade.result:
         return RedirectResponse("/admin", status_code=303)
@@ -390,7 +394,7 @@ async def skip_signal(trade_id: int, db: Session = Depends(get_db)):
             if personal_id:
                 send_telegram(f"Skipped: Trade #{number} {asset}", token, personal_id)
         await asyncio.get_running_loop().run_in_executor(None, tell_group)
-    return RedirectResponse(admin_path(market), status_code=303)
+    return RedirectResponse(back_path(market, back), status_code=303)
 
 @app.post("/post/{trade_id}")
 async def post_signal(trade_id: int, db: Session = Depends(get_db)):
@@ -417,7 +421,7 @@ async def post_signal(trade_id: int, db: Session = Depends(get_db)):
     return RedirectResponse(redir, status_code=303)
 
 @app.post("/result/{trade_id}")
-async def log_result(trade_id: int, result: str = Form(...), db: Session = Depends(get_db)):
+async def log_result(trade_id: int, result: str = Form(...), back: str = Form(""), db: Session = Depends(get_db)):
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     result = (result or "").upper()
     if not trade or trade.result or result not in ("WIN", "LOSS", "DRAW"):
@@ -450,8 +454,7 @@ async def log_result(trade_id: int, result: str = Form(...), db: Session = Depen
         else:
             three_min_martingale_level = 0
 
-    redir = admin_path(trade.market_type)
-    return RedirectResponse(redir, status_code=303)
+    return RedirectResponse(back_path(trade.market_type, back), status_code=303)
 
 @app.post("/pause/{market}")
 async def toggle_pause(market: str):
@@ -1028,12 +1031,35 @@ async def admin_login_submit(request: Request, username: str = Form(""), passwor
     request.session["admin"] = True
     return RedirectResponse("/admin", status_code=303)
 
+BOT_NAMES = {"patience": "Patience Bot", "3min": "3 min Bot"}
+
+def live_trades_html(db: Session) -> str:
+    """Posted trades (both bots) that are still waiting for a result, shown on the admin hub."""
+    live = db.query(Trade).filter(Trade.status == "active", Trade.result.is_(None)).order_by(Trade.created_at).all()
+    items = []
+    for t in live:
+        d = t.details or {}
+        entry = _stored_time(d, "entry_at", None)
+        expire = _stored_time(d, "expire_at", None)
+        items.append({
+            "id": t.id, "number": int(t.trade_number or 0), "mg": int(t.martingale_level or 0),
+            "pair": t.asset or "-", "action": (t.action or "-").upper(), "expiry": int(t.expiry_mins or 0),
+            "bot": BOT_NAMES.get(t.market_type, "Bot"),
+            "entry_text": entry.strftime("%I:%M %p").lstrip("0") if entry else "",
+            "entry_iso": entry.isoformat() if entry else "", "exp_iso": expire.isoformat() if expire else "",
+        })
+    return ui.live_trades_box(items, datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+@app.get("/admin/live", response_class=HTMLResponse)
+async def admin_live(db: Session = Depends(get_db)):
+    return HTMLResponse(live_trades_html(db))
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_home(db: Session = Depends(get_db)):
     users = db.query(User).all()
     waiting = len([u for u in users if u.is_active is False])
     info = {m: f"{e.last_scan_info} · {telegram_status.get(m, '')}" for m, e in ENGINES.items()}
-    return HTMLResponse(ui.admin_hub(len(users), waiting, REQUIRE_APPROVAL, info))
+    return HTMLResponse(ui.admin_hub(len(users), waiting, REQUIRE_APPROVAL, info, live_trades_html(db)))
 
 # ---- pairs record ---------------------------------------------------------------
 PAIR_PERIODS = {"all": None, "30": 30, "7": 7, "1": 1}

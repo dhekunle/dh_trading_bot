@@ -815,7 +815,72 @@ def pending_page(email: str) -> str:
 
 
 # ---------------------------------------------------------------------- admin
-def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: dict) -> str:
+def live_trades_box(items: list, server_now: str) -> str:
+    """The inside of the Live trades card: every posted trade still waiting for a result, from both bots."""
+    if not items:
+        return (f'<div id="live-inner" data-now="{esc(server_now)}"><p style="color:var(--muted);margin:6px 0 0">'
+                'No live trade right now. When a signal goes live it shows here with the Win, Loss, Draw and Skip buttons.</p></div>')
+    rows = ""
+    for t in items:
+        side_color = "var(--green)" if t["action"] == "BUY" else "var(--red)"
+        mg = f' &middot; MG{t["mg"]}' if t["mg"] else ""
+        def form(path, label, cls, value=None):
+            hidden = f'<input type="hidden" name="result" value="{value}">' if value else ""
+            return (f'<form method="post" action="{path}" style="margin:0"><input type="hidden" name="back" value="/admin">{hidden}'
+                    f'<button class="btn btn-sm {cls}" type="submit" style="width:auto;margin:0;min-width:64px">{label}</button></form>')
+        buttons = (form(f"/result/{t['id']}", "Win", "btn-ok", "WIN") + form(f"/result/{t['id']}", "Loss", "btn-danger", "LOSS")
+                   + form(f"/result/{t['id']}", "Draw", "btn-ghost", "DRAW") + form(f"/skip/{t['id']}", "Skip", "btn-ghost"))
+        rows += (
+            f'<div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;'
+            f'padding:14px 0;border-top:1px solid var(--line)" class="live-row" data-entry="{esc(t["entry_iso"])}" data-exp="{esc(t["exp_iso"])}">'
+            f'<div style="min-width:170px"><div style="font-weight:800;font-size:1.05rem">{esc(t["pair"])} '
+            f'<span style="color:{side_color}">{esc(t["action"])}</span></div>'
+            f'<div style="color:var(--muted);font-size:.82rem">{esc(t["bot"])} &middot; Trade #{t["number"]}{mg} &middot; {t["expiry"]} min'
+            f'{" &middot; enter " + esc(t["entry_text"]) if t["entry_text"] else ""}</div>'
+            f'<div class="live-state" style="font-size:.85rem;font-weight:700;color:var(--amber);margin-top:3px"></div></div>'
+            f'<div style="display:flex;gap:8px;flex-wrap:wrap">{buttons}</div></div>'
+        )
+    return f'<div id="live-inner" data-now="{esc(server_now)}">{rows}</div>'
+
+
+LIVE_JS = """
+<script>
+(function(){
+  var offset = 0;
+  function mmss(ms){ var s = Math.max(0, Math.ceil(ms/1000)), m = Math.floor(s/60); return m + ':' + ('0' + (s%60)).slice(-2); }
+  function floorMin(iso){ var ms = Date.parse(iso); return isNaN(ms) ? null : Math.floor(ms/60000)*60000; }
+  function syncClock(){
+    var box = document.getElementById('live-inner');
+    if (box && box.dataset.now) offset = Date.parse(box.dataset.now) - Date.now();
+  }
+  function tick(){
+    var rows = document.querySelectorAll('.live-row'), now = Date.now() + offset;
+    for (var i = 0; i < rows.length; i++){
+      var r = rows[i], en = floorMin(r.dataset.entry), ex = floorMin(r.dataset.exp), el = r.querySelector('.live-state'), txt = '';
+      if (en !== null && ex !== null){
+        if (now < en) txt = 'Enter in ' + mmss(en - now);
+        else if (now < ex) txt = 'In trade \u00b7 ends in ' + mmss(ex - now);
+        else txt = 'Time is up \u00b7 log the result';
+      }
+      if (el) el.textContent = txt;
+    }
+  }
+  function refresh(){
+    fetch('/admin/live', {credentials:'same-origin', cache:'no-store'}).then(function(r){ return r.ok ? r.text() : null; }).then(function(html){
+      if (!html) return;
+      var holder = document.getElementById('live-holder');
+      if (holder){ holder.innerHTML = html; syncClock(); tick(); }
+    }).catch(function(){});
+  }
+  syncClock(); tick();
+  setInterval(tick, 250);
+  setInterval(refresh, 5000);
+})();
+</script>
+"""
+
+
+def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: dict, live_html: str = "") -> str:
     right = ('<a class="btn btn-sm" href="/admin/pairs">Pairs record</a>'
              '<a class="btn btn-ghost btn-sm" href="/app">User view</a>'
              '<form method="post" action="/logout" style="display:inline"><button class="linkbtn" type="submit">Log out</button></form>')
@@ -829,6 +894,9 @@ def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: d
 <main class="dash"><div class="wrap">
   <div class="dash-head"><div><h1>Admin</h1><p>{esc(approval)}</p></div></div>
   <div class="grid3">
+    <div class="card" style="grid-column:1/-1"><h3 style="margin-top:0">Live trades</h3>
+      <p style="margin:2px 0 6px;color:var(--muted);font-size:.85rem">Posted trades from the Patience and 3 min bots. Log the result or skip here.</p>
+      <div id="live-holder">{live_html}</div></div>
     {bot_card("/admin/patience", "Patience Bot", "patience")}
     {bot_card("/admin/3min", "3 min Bot", "3min")}
     <a class="card hub-card" href="/admin/chat"><h3>Community chat</h3>
@@ -838,7 +906,7 @@ def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: d
       <p style="margin-top:10px;font-size:.82rem">Enable or disable access.</p></a>
   </div>
   <p class="fine"><a href="/status" style="text-decoration:underline">Price data and bot status (JSON)</a></p>
-</div></main></body></html>"""
+</div></main>{LIVE_JS}</body></html>"""
     return head(f"Admin | {SITE}") + "<body>" + body
 
 
