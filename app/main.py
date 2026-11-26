@@ -169,14 +169,21 @@ def delete_telegram_message(token: str, chat_id: str, message_id) -> bool:
         print(f"[TELEGRAM] delete error: {str(e).replace(token, '***')[:150]}")
         return False
 
+def today_start_utc():
+    """Midnight today in Nigeria time (WAT), as a naive UTC time like Trade.created_at."""
+    midnight = datetime.datetime.now(WAT).replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+
 def market_numbers(db, market: str):
-    """Results and trade numbering kept separately for each bot."""
-    rows = db.query(Trade.status, Trade.trade_number).filter(
-        Trade.market_type == market, Trade.status.in_(RESOLVED)).all()
+    """Results kept separately for each bot. The next trade number starts again at 1 every day (WAT)."""
+    rows = db.query(Trade.status).filter(Trade.market_type == market, Trade.status.in_(RESOLVED)).all()
     wins = sum(1 for r in rows if r[0] == "win")
     losses = sum(1 for r in rows if r[0] == "loss")
     draws = sum(1 for r in rows if r[0] == "draw")
-    last = max([int(r[1] or 0) for r in rows], default=0)
+    today = db.query(Trade.trade_number).filter(
+        Trade.market_type == market, Trade.status.in_(RESOLVED + ["active"]),
+        Trade.created_at >= today_start_utc()).all()
+    last = max([int(r[0] or 0) for r in today], default=0)
     return wins, losses, draws, last + 1
 
 briefing_sent = {"patience": None, "3min": None}      # date of the last briefing, so resuming twice does not repeat it
@@ -327,7 +334,7 @@ def build_dashboard(market: str, db: Session, paused: bool, auto_on: bool, quali
     pause_class = "btn-green" if paused else ""
     html = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090a0f"><meta http-equiv="refresh" content="20"><title>{title} · Admin</title>{STYLE}</head>
 <body><main class="container">
-<header class="top"><div class="brand"><div class="mark">⌁</div><div><h1>{title}</h1><p>DH Binary Trader <span class="muted">/ Operations console</span></p></div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="adminlink" href="/admin/pairs">📊 Pairs record</a><a class="adminlink" href="/admin">← Admin hub</a></div></header>
+<header class="top"><div class="brand"><div class="mark">⌁</div><div><h1>{title}</h1><p>DH Binary Trader <span class="muted">/ Operations console</span></p></div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><a class="adminlink" href="/admin/record">🗓 Daily records</a><a class="adminlink" href="/admin/pairs">📊 Pairs record</a><a class="adminlink" href="/admin">← Admin hub</a></div></header>
 <section class="statusbar"><div class="statusitem"><div class="eyebrow">Market session</div><div class="value">{htmllib.escape(session_text)}</div><div class="muted" style="font-size:12px">{now}</div></div><div class="statusitem"><div class="eyebrow">Market quality</div><div class="value {q_class}">{htmllib.escape(str(quality))}</div><div class="muted" style="font-size:12px">{htmllib.escape(str(reason))}{htmllib.escape(vol_text)}</div></div><div class="statusitem"><div class="eyebrow">Auto scan · Bot</div><div class="value {'green' if auto_on and not paused else 'amber'}">{auto_status} · {bot_status}</div><div class="muted" style="font-size:12px">Next trade #{next_trade}</div></div></section>
 <div class="notice"><strong>System status</strong> · {scan_line}</div>
 <section class="layout"><article class="panel"><div class="panelhead"><h2>Bot controls</h2><span class="chip">{bot_status}</span></div><div class="controls">
@@ -1060,6 +1067,55 @@ async def admin_home(db: Session = Depends(get_db)):
     waiting = len([u for u in users if u.is_active is False])
     info = {m: f"{e.last_scan_info} · {telegram_status.get(m, '')}" for m, e in ENGINES.items()}
     return HTMLResponse(ui.admin_hub(len(users), waiting, REQUIRE_APPROVAL, info, live_trades_html(db)))
+
+# ---- daily and weekly records -----------------------------------------------------
+def weekly_records(db: Session, market: str = "all") -> list:
+    """Every resolved trade grouped by day and by week (Monday to Sunday, Nigeria time). Newest week first.
+
+    Nothing is deleted when a new week starts: last week simply becomes an older entry in this list,
+    and the new week starts counting from zero.
+    """
+    q = db.query(Trade).filter(Trade.status.in_(RESOLVED))
+    if market in ("patience", "3min"):
+        q = q.filter(Trade.market_type == market)
+    days = {}
+    for t in q.order_by(Trade.created_at).all():
+        local = t.created_at.replace(tzinfo=datetime.timezone.utc).astimezone(WAT)
+        day = days.setdefault(local.date(), {"date": local.date(), "wins": 0, "losses": 0, "draws": 0, "trades": []})
+        day[{"win": "wins", "loss": "losses", "draw": "draws"}[t.status]] += 1
+        day["trades"].append({"n": int(t.trade_number or 0), "pair": t.asset or "-", "action": (t.action or "-").upper(),
+                              "time": local.strftime("%I:%M %p").lstrip("0"), "result": t.status,
+                              "bot": BOT_NAMES.get(t.market_type, "Bot"), "mg": int(t.martingale_level or 0)})
+    weeks = {}
+    for d, day in days.items():
+        start = d - datetime.timedelta(days=d.weekday())
+        wk = weeks.setdefault(start, {"start": start, "end": start + datetime.timedelta(days=6),
+                                      "wins": 0, "losses": 0, "draws": 0, "days": []})
+        wk["wins"] += day["wins"]; wk["losses"] += day["losses"]; wk["draws"] += day["draws"]
+        wk["days"].append(day)
+    out = sorted(weeks.values(), key=lambda w: w["start"], reverse=True)
+    for wk in out:
+        wk["days"].sort(key=lambda d: d["date"], reverse=True)
+    this_monday = datetime.datetime.now(WAT).date() - datetime.timedelta(days=datetime.datetime.now(WAT).date().weekday())
+    for wk in out:
+        wk["current"] = wk["start"] == this_monday
+    return out[:13]    # this week and the 12 before it
+
+def record_market(market: str) -> str:
+    return market if market in ("patience", "3min") else "all"
+
+@app.get("/admin/record", response_class=HTMLResponse)
+async def admin_record(market: str = "all", db: Session = Depends(get_db)):
+    market = record_market(market)
+    return HTMLResponse(ui.record_page(weekly_records(db, market), market, admin=True))
+
+@app.get("/app/record", response_class=HTMLResponse)
+async def user_record(request: Request, market: str = "all", db: Session = Depends(get_db)):
+    user, is_admin, early = app_viewer(request, db)
+    if early:
+        return early
+    market = record_market(market)
+    return HTMLResponse(ui.record_page(weekly_records(db, market), market, admin=False))
 
 # ---- pairs record ---------------------------------------------------------------
 PAIR_PERIODS = {"all": None, "30": 30, "7": 7, "1": 1}

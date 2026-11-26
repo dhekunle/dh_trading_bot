@@ -77,3 +77,8 @@ After login members land on `/app`, a home page that lists the areas. Each opens
 ## Pairs record and entry time
 - `/admin/pairs` (button "Pairs record" at the top of the admin hub and both bot dashboards) shows the number of trades, wins and losses (and win rate) for every pair, best first. Filter by bot (All, Patience, 3 min) and by period (All time, 30 days, 7 days, Today). A pair is Good at 60% or more, Weak below 50%, once it has 5 decided trades. It reads the results you already log with WIN / LOSS / DRAW, so old trades are included.
 - Entry time is now always a whole minute (seconds = 00). Telegram shows hours and minutes only, so the website countdown now reaches zero exactly when Telegram's entry minute starts. If the next minute is less than 30 seconds away, the minute after is used, and Telegram and the website both show that same time.
+
+## Daily numbering and records
+- Trade numbers start again at #1 every day (midnight to midnight, Nigeria time), separately for each bot.
+- `/admin/record` (admin) and `/app/record` (members, tile "Daily & weekly records" on the home page) show trades, wins, losses and win % for every day, grouped by week (Monday to Sunday). Tap a day to see its trades.
+- Nothing is deleted at the end of a week. The old week stays in the list and the new week starts counting from zero.

@@ -679,6 +679,7 @@ _ICON = {
     "signals": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>',
     "chat": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
     "dm": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
+    "record": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15l2.5 2.5L16 13"/></svg>',
     "profile": '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
 }
 _CHEV = '<svg class="go" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>'
@@ -722,6 +723,7 @@ def user_hub(email: str, chat_name: str = "", me: dict = None) -> str:
         tile("/app/signals", "signals", "g", "Trades &amp; signals",
              "Live signals from the Patience Bot and the 3 min Bot, with entry times and results.",
              ' <span class="live-pill" id="live-count" hidden></span>'),
+        tile("/app/record", "record", "a", "Daily &amp; weekly records", "Wins, losses and win rate for every day and every week."),
         tile("/app/chat", "chat", "", "Community chat", "Talk with other members and the admin."),
     ]
     if me:
@@ -881,7 +883,8 @@ LIVE_JS = """
 
 
 def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: dict, live_html: str = "") -> str:
-    right = ('<a class="btn btn-sm" href="/admin/pairs">Pairs record</a>'
+    right = ('<a class="btn btn-sm" href="/admin/record">Daily records</a>'
+             '<a class="btn btn-sm" href="/admin/pairs">Pairs record</a>'
              '<a class="btn btn-ghost btn-sm" href="/app">User view</a>'
              '<form method="post" action="/logout" style="display:inline"><button class="linkbtn" type="submit">Log out</button></form>')
     def bot_card(path, name, key):
@@ -908,6 +911,76 @@ def admin_hub(user_count: int, waiting: int, require_approval: bool, bot_info: d
   <p class="fine"><a href="/status" style="text-decoration:underline">Price data and bot status (JSON)</a></p>
 </div></main>{LIVE_JS}</body></html>"""
     return head(f"Admin | {SITE}") + "<body>" + body
+
+
+def record_page(weeks: list, market: str, admin: bool) -> str:
+    """Daily and weekly record. Each day lists its own trades, numbered from #1."""
+    base = "/admin/record" if admin else "/app/record"
+    right = '<a class="btn btn-ghost btn-sm" href="/admin">Back</a>' if admin else _home_link() + _logout_form()
+    tabs = ""
+    for key, label in (("all", "All bots"), ("patience", "Patience Bot"), ("3min", "3 min Bot")):
+        tabs += f'<a class="{"tab on" if key == market else "tab"}" href="{base}?market={key}">{label}</a>'
+
+    def pct(w, l):
+        return "-" if (w + l) == 0 else f"{round(w * 100 / (w + l))}%"
+    def pct_color(w, l):
+        if (w + l) == 0:
+            return "var(--muted)"
+        r = w * 100 / (w + l)
+        return "var(--green)" if r >= 60 else ("var(--red)" if r < 50 else "var(--amber)")
+    res_color = {"win": "var(--green)", "loss": "var(--red)", "draw": "var(--amber)"}
+
+    def figures(w, l, d):
+        extra = f' <span style="color:var(--muted);font-weight:500">(+{d} draw{"s" if d != 1 else ""})</span>' if d else ""
+        return (f'<span style="font-weight:800">{w + l}</span>{extra}'
+                f'<span style="color:var(--green);font-weight:800">{w}</span>'
+                f'<span style="color:var(--red);font-weight:800">{l}</span>'
+                f'<b style="color:{pct_color(w, l)}">{pct(w, l)}</b>')
+    cols = "display:grid;grid-template-columns:1.6fr 1fr .7fr .7fr .8fr;gap:8px;align-items:center"
+
+    def day_block(day):
+        rows = ""
+        for t in sorted(day["trades"], key=lambda x: x["n"]):
+            mg = f' &middot; MG{t["mg"]}' if t["mg"] else ""
+            side = "var(--green)" if t["action"] == "BUY" else "var(--red)"
+            rows += (f'<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 2px;border-top:1px solid var(--line);font-size:.85rem">'
+                     f'<span><b>#{t["n"]}</b>{mg} &nbsp;{esc(t["pair"])} <span style="color:{side};font-weight:700">{esc(t["action"])}</span>'
+                     f' <span style="color:var(--muted)">&middot; {esc(t["bot"])} &middot; {esc(t["time"])}</span></span>'
+                     f'<b style="color:{res_color.get(t["result"], "var(--muted)")}">{esc(t["result"].upper())}</b></div>')
+        label = day["date"].strftime("%A, %d %b %Y")
+        return (f'<details style="border-top:1px solid var(--line);padding:11px 0"><summary style="cursor:pointer;list-style:none;{cols}">'
+                f'<span style="font-weight:700">{label}</span>{figures(day["wins"], day["losses"], day["draws"])}</summary>'
+                f'<div style="margin-top:8px">{rows}</div></details>')
+
+    head_row = (f'<div style="{cols};color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;padding-bottom:8px">'
+                '<span>Day</span><span>Trades</span><span>Wins</span><span>Losses</span><span>Win %</span></div>')
+
+    blocks = ""
+    for wk in weeks:
+        title = f'{wk["start"].strftime("%d %b")} to {wk["end"].strftime("%d %b %Y")}'
+        tag = "This week" if wk["current"] else "Week"
+        summary = (f'<div style="{cols}"><span style="font-weight:800">{tag}: {title}</span>'
+                   f'{figures(wk["wins"], wk["losses"], wk["draws"])}</div>')
+        days = "".join(day_block(d) for d in wk["days"])
+        blocks += (f'<details class="card" style="margin-bottom:14px;padding:16px 18px"{" open" if wk["current"] else ""}>'
+                   f'<summary style="cursor:pointer;list-style:none">{summary}</summary>'
+                   f'<div style="margin-top:14px">{head_row}{days}</div></details>')
+    if not blocks:
+        blocks = '<div class="card empty">No results recorded yet. Records appear here once trades are logged as Win or Loss.</div>'
+    elif not any(w["current"] for w in weeks):
+        blocks = ('<div class="card" style="margin-bottom:14px;padding:16px 18px;color:var(--muted)">'
+                  'New week started. No trades yet, so the count begins from zero when the first trade is logged.</div>') + blocks
+
+    body = f"""
+{topbar(right)}
+<main class="dash"><div class="wrap">
+  <div class="dash-head"><div><h1>Daily &amp; weekly records</h1>
+    <p>Trade numbers start again at #1 every day. Every Monday a new week starts and the old week is kept below.</p></div></div>
+  <div class="tabs">{tabs}</div>
+  {blocks}
+  <p class="fine">Trades = wins + losses. Draws, skipped and expired signals are not counted. Days run from midnight to midnight, Nigeria time. Tap a day to see its trades.</p>
+</div></main></body></html>"""
+    return head(f"Records | {SITE}") + "<body>" + body
 
 
 def admin_pairs_page(rows: list, market: str, period: str, min_trades: int) -> str:
